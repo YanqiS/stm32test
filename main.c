@@ -34,14 +34,31 @@
 #include <stdbool.h>
 //#include <Device_V1.h>
 #include <OLED.h>
-#include <USBPD.h>
+//#include <USBPD.h>
 
 #include <stm32g0xx_hal_fdcan.h>
 
 ////mylib
 #include <EasySyslib.h>
+#include <FlashAddr.h>
 //#include "ModBus.h"
 //#include "TCHUBv3.h"
+
+#include "lvgl.h"
+#include "lv_conf.h"
+#include "E:\stm32\STM32CubeIDE_1.18.1\workspace\v4_3.0ZXD\G0B1VET6_TSTA_v4_3.0ZXD\Core\lvgl\examples\porting\lv_port_disp.h"
+#include "E:\stm32\STM32CubeIDE_1.18.1\workspace\v4_3.0ZXD\G0B1VET6_TSTA_v4_3.0ZXD\Core\lvgl\examples\porting\lv_port_indev.h"
+#include "E:\stm32\STM32CubeIDE_1.18.1\workspace\v4_3.0ZXD\G0B1VET6_TSTA_v4_3.0ZXD\Core\lvgl\gui_guider\gui_guider.h"
+#include "E:\stm32\STM32CubeIDE_1.18.1\workspace\v4_3.0ZXD\G0B1VET6_TSTA_v4_3.0ZXD\Core\lvgl\gui_guider\events_init.h"
+
+#include "E:\stm32\STM32CubeIDE_1.18.1\workspace\v4_3.0ZXD\G0B1VET6_TSTA_v4_3.0ZXD\Core\lvgl\gui_guider\widgets_init.h"
+#include "E:\stm32\STM32CubeIDE_1.18.1\workspace\v4_3.0ZXD\G0B1VET6_TSTA_v4_3.0ZXD\Core\lvgl\custom\custom.h"
+
+
+lv_ui guider_ui;
+
+uint8_t lv_refresh_flg ,lv_refresh_flg_old;
+
 
 /* USER CODE END Includes */
 
@@ -53,23 +70,32 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 SPI_HandleTypeDef *Flash_SPI;
+SPI_HandleTypeDef *TFT_SPI;
 
 UART_HandleTypeDef *Serial_Num;
 
+#define LINProfile_AH4EM		0
+#define LINProfile_IP5PM		1
+#define LINProfile_ZS32			0
+
+#define PWM_ag0			550
+#define PWM_ag90			1500
+#define PWM_agMAX			145
 
 #define ADC_CHANNELS 	6
 #define LightSensr_Gate 	50
 uint16_t adc_buffer[ADC_CHANNELS]={0};
 
-int Version_A		= 0	;	//Ver  A.BC
-int Version_B		= 1 ;
-int Version_C		= 0 ;	//0.08
+int Version_A		= 4	;	//Ver  A.BC
+int Version_B		= 0 ;
+int Version_C		= 3 ;	//0.08
 
-//#define Serial_Data_LENGTH		24	//24-1
+uint16_t	LIN_Data_LENGTH = 1;//1;
 uint16_t	Serial_Data_LENGTH = 24;
 
 uint16_t CAN1_2Ser_ID[32];
 uint16_t CAN2_2Ser_ID[32];
+
 
 /* USER CODE END PD */
 
@@ -91,8 +117,13 @@ I2C_HandleTypeDef hi2c1;
 I2C_HandleTypeDef hi2c3;
 
 SPI_HandleTypeDef hspi1;
+DMA_HandleTypeDef hdma_spi1_tx;
+DMA_HandleTypeDef hdma_spi1_rx;
 
 TIM_HandleTypeDef htim1;
+TIM_HandleTypeDef htim2;
+TIM_HandleTypeDef htim3;
+TIM_HandleTypeDef htim4;
 TIM_HandleTypeDef htim6;
 TIM_HandleTypeDef htim7;
 TIM_HandleTypeDef htim14;
@@ -101,6 +132,8 @@ TIM_HandleTypeDef htim16;
 TIM_HandleTypeDef htim17;
 
 UART_HandleTypeDef huart1;
+UART_HandleTypeDef huart2;
+UART_HandleTypeDef huart3;
 
 /* USER CODE BEGIN PV */
 
@@ -113,14 +146,13 @@ uint8_t EncrypKey;
 
 uint8_t dateTimeBuffer[7];
 
+bool SW_UP, SW_UP_pre, SW_DW, SW_DW_pre, SW_LEFT, SW_LEFT_pre, SW_RIGHT, SW_RIGHT_pre, SW_BUTTON, SW_BUTTON_pre;
+
 //W25Q64 	sector		block		page
 //8M/64m	 256	x	 64		x	 256
 int Sys_CNT, Sys_RunCNT,	Sys_CNT1, Sys_RunCNT1;
 ////	DispX0,DispX1,DispY0,DispY1;
-uint32_t Sys_Addr_DispX0 	= 	0x001100;
-uint32_t Sys_Addr_DispX1 	= 	0x001110;
-uint32_t Sys_Addr_DispY0	=	0x001200;		//
-uint32_t Sys_Addr_DispY1	=	0x001210;		//
+
 
 uint32_t Sys_TIM_TICK;	//1-1000ms
 bool	Sys_TIM_Flag;
@@ -128,7 +160,7 @@ bool	Sys_TIM_Flag;
 //config
 int8_t BoardID;
 bool SW1_1, SW1_2, SW2_1, SW2_2;
-int Mode_ID;	//IO_CFG_1/2/3/4	电阻上拉，拨码开关off时高电平，on时与GND导�?�，低电�??????????????????????????????????????????????????????????????????
+int Mode_ID;	//IO_CFG_1/2/3/4	电阻上拉，拨码开关off时高电平，on时与GND导�?�，低电�??????????????????????????????????????????????????????????????????????????????????????
 
 //state
 int sys_state = 0; //0 - 6; 	0 - none; 1- green	;2 - cyan(青色，天蓝）;3 - blue	;4 - yellow	;5 - purple	;6 - red
@@ -136,7 +168,34 @@ bool ERR = 0;
 int Remote_state = 0;
 uint8_t Web_ConnectSts;
 
+uint8_t lvLED_Sts_TPRobot, lvLED_Sts_LIN, lvLED_Sts_CAN, lvLED_Sts_Sensor;	// 0 grey,	1	green,	2	oragne,	3	red
 
+
+////LIN
+uint8_t DataReceiveflag;
+uint8_t DataProcess;
+uint8_t ReceivePID,ReceiveID;
+uint8_t FrameReceiveOverFlag;
+uint8_t LinReceiveData[9];
+uint8_t ReceiveData,SendCheckSum,ReceiveCheckSum;
+uint8_t DtRxProcess;
+
+#define CANMsg_MNumb		32
+FDCAN_TxHeaderTypeDef CAN_TxHeader[CANMsg_MNumb];
+FDCAN_TxHeaderTypeDef FDCAN_TxHeader[CANMsg_MNumb];
+
+// 添加调试用的全局变量
+uint8_t DEBUG_CAN_Up = 0xFF;    // 0xFF表示未收到数据
+uint8_t DEBUG_CAN_Down = 0xFF;
+uint8_t DEBUG_CAN_RX_Flag = 0;  // 收到新数据标志
+uint8_t DEBUG_LIN_Byte1 = 0;     // LIN打包后的Byte1
+uint8_t DEBUG_LIN_Pack_Flag = 0; // 打包完成标志
+uint8_t DEBUG_LIN_Checksum = 0;
+
+uint8_t DEBUG_UART_RX_Count = 0;      // UART接收计数
+uint8_t DEBUG_ReceiveID = 0;          // 收到的ID
+uint8_t DEBUG_LIN_Send_Count = 0;     // LIN发送计数
+uint8_t DEBUG_DataProcess = 0;        // DataProcess状态
 
 //////// ////////app level
 
@@ -151,18 +210,16 @@ uint16_t M4_ID = 0x0D5;//D5,	Z
 uint8_t MotorInit_M1, MotorInit_M2, MotorInit_M3, MotorInit_M4;
 bool MotorERR_M1, MotorERR_M2, MotorERR_M3, MotorERR_M4;
 
-#define XmaxLimit 	200		//
-#define YmaxLimit 	220		//
+#define XmaxLimit 	500		//290
+#define YmaxLimit 	500		//435
 
-//#define DispX0 	100		//
-//#define DispX1 	120		//
-//#define DispY0 	100		//
-//#define DispY1 	120		//
-uint8_t	DispX0[4],DispX1[4],DispY0[4],DispY1[4];
-int	DispX0_32b,DispX1_32b,DispY0_32b,DispY1_32b;
+//#define RCtrl_Mode_0m1p		1
 
-#define CANMsg_MNumb		32
+//#define DispX0 	100		////#define DispX1 	120		////#define DispY0 	100		////#define DispY1 	120		//
+//uint8_t	DispX0[4],DispX1[4],DispY0[4],DispY1[4];
+//int	DispX0_32b,DispX1_32b,DispY0_32b,DispY1_32b;
 
+struct ScreenSize_TypeDef ScreenSz_1;
 
 
 //web232
@@ -174,6 +231,10 @@ struct Bench_AckInfo_TypeDef Bench_Info;
 struct TA531_env_TypeDef TA531SysEnv;
 struct TA531_TimCallback_TypeDef TA531TimCallback;
 struct TA531_RobotCtrl_TypeDef TA531_RC1;
+
+struct TA531_GP_IN_TypeDef TA531_GP_IN;
+struct TA531_Door_TypeDef TA531_Door;
+uint8_t TSA_GP_IN_DATA[8];
 
 uint8_t	TA531_RC1_fg;	// 0-Error;	1-no task;	2-command received;	3-command accomplish;
 uint8_t	TA531_RC1_x_ready,TA531_RC1_y_ready,TA531_RC1_z_ready;
@@ -187,12 +248,16 @@ FDCAN_TxHeaderTypeDef FDCAN_TxHeader[CANMsg_MNumb];
 FDCAN_TxHeaderTypeDef MotrCtrl_1_TxHeader,MotrCtrl_2_TxHeader,MotrCtrl_3_TxHeader,MotrCtrl_4_TxHeader;
 FDCAN_RxHeaderTypeDef FDCAN1_RxHeader,FDCAN2_RxHeader,MotrCtrl_1_RxHeader,MotrCtrl_2_RxHeader,MotrCtrl_3_RxHeader;
 FDCAN_FilterTypeDef FDCAN_Filter1[28],FDCAN_Filter2[28]; //
-FDCAN_TxHeaderTypeDef TSA_Ack_Header,TSA1_ADC_Header, TSA2_LS_Header, TSA_Ack_RC_Header;
-
-//ccommunication
+FDCAN_TxHeaderTypeDef TSA_Ack_Header,TSA1_ADC_Header, TSA2_LS_Header, TSA_Ack_RC_Header,TSA_GP_IN_Header;
+FDCAN_TxHeaderTypeDef TSA_Door_Relay_Header;
+uint8_t TSA_Door_Relay_DATA[8];
+//communication
 
 uint8_t CH1RxData[8], CH2RxData[8];
 uint8_t CH1TxData[8], CH2TxData[8], TSA1_ADC_DATA[8], TSA2_LS_DATA[8], TSA_Ack_DATA[8], TSA_Ack_RC_DATA[8];
+uint8_t SWS_0x00_Data[9], SWS_0x02_Data[9], HOD_0x0_Data[9], EBS_0x0_Data[9], IFP_0x0_Data[9];
+uint8_t SWS_0x22_Data[9];//G3.0
+bool SWS_0x00_Flag, SWS_0x02_Flag, HOD_0x0_Flag, EBS_0x0_Flag, IFP_0x0_Flag,SWS_0x22_Flag;
 uint8_t MotrCtrl_1_DATA[8], MotrCtrl_2_DATA[8], MotrCtrl_3_DATA[8], MotrCtrl_4_DATA[8];
 
 uint8_t I2CRxData[REC_LENGTH];
@@ -202,21 +267,58 @@ uint8_t u1RxData[REC_LENGTH], u2RxData[REC_LENGTH], u3RxData[REC_LENGTH],
 uint8_t Serial_TxData[REC_LENGTH] = {0};
 uint8_t Bench_Info_TxData[REC_LENGTH] = {0};
 
+struct TA531_LIN_GW_TypeDef TA531_LIN_GW;
+struct TA531_LIN_SWS_TypeDef TA531_LIN_SWS;
+struct TA531_LIN_SWS_G3_TypeDef TA531_LIN_SWS_G3;
 
 uint32_t len;
 
 
 bool rxflag;
-bool U1RXFlag = 0, U2RXFlag = 0, U3RXFlag = 0, U4RXFlag = 0, U5RXFlag = 0,
-		U6RXFlag = 0;//
+bool U1RXFlag = 0, U2RXFlag = 0, U3RXFlag = 0, U4RXFlag = 0, U5RXFlag = 0,U6RXFlag = 0;
 
-bool TSA3_0x52_Flag = 0, TSA4_0x53_Flag = 0;
+bool TSA3_0x52_Flag = 0, TSA4_0x53_Flag = 0,TSA4_0x54_Flag = 0,TSA4_0x103_Flag = 0, TSA4_0x104_Flag = 0;
 
+
+////////TMP1075
+float temp1075_ZXD , temp1075_ZPD , temp1075_LHZCU , temp1075_RHZCU , temp1075_RZCU , temp1075_Bk1 , temp1075_Bk2 , temp1075_Bk3;
+uint8_t temp1075_ZXD_i , temp1075_ZPD_i , temp1075_LHZCU_i , temp1075_RHZCU_i , temp1075_RZCU_i , temp1075_Bk1_i , temp1075_Bk2_i , temp1075_Bk3_i;
+uint8_t temp1075_ZXD_f , temp1075_ZPD_f , temp1075_LHZCU_f , temp1075_RHZCU_f , temp1075_RZCU_f , temp1075_Bk1_f , temp1075_Bk2_f , temp1075_Bk3_f;
+bool temper_flag;
 
 uint32_t adc_value;
 uint32_t mVoltage;
 
+struct TA531_Door_TypeDef {
+    uint8_t Door_FL;        // 左前门：0-无动作, 1-开, 2-关, 3-保持
+    uint8_t Door_FR;        // 右前门
+    uint8_t Door_RL;        // 左后门
+    uint8_t Door_Hood;      // 引擎盖
+    uint8_t Door_Trunk;     // 后备箱
+    uint8_t Door_Reserve;
+};
 
+// ========== 电机保护系统 ==========
+struct Motor_Protection_TypeDef {
+    int16_t last_X_pos;
+    int16_t last_Y_pos;
+    int8_t X_direction_changes;
+    int8_t Y_direction_changes;
+    uint16_t stuck_counter;
+    uint16_t movement_timeout;
+    uint8_t protection_triggered;
+    uint8_t error_type;
+    uint32_t total_errors;
+};
+
+struct Motor_Protection_TypeDef Motor_Protection;
+
+#define MOTOR_PROTECTION_ENABLED        1
+#define MAX_DIRECTION_CHANGES          3
+#define MAX_STUCK_COUNT               3
+#define MAX_MOVEMENT_TIMEOUT         100
+#define POSITION_TOLERANCE             5
+// ==================================
 
 
 /* USER CODE END PV */
@@ -240,24 +342,50 @@ static void MX_TIM16_Init(void);
 static void MX_TIM17_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_TIM15_Init(void);
+static void MX_USART3_UART_Init(void);
+static void MX_USART2_UART_Init(void);
+static void MX_TIM2_Init(void);
+static void MX_TIM3_Init(void);
+static void MX_TIM4_Init(void);
 /* USER CODE BEGIN PFP */
 void UART_RESET(UART_HandleTypeDef *huart);
 void UART_Init(UART_HandleTypeDef *huart, uint32_t data_length);
+void LIN_RESET(UART_HandleTypeDef *huart);
+uint8_t Lin_CheckPID(uint8_t id);
+uint8_t Lin_Checksum(uint8_t id , uint8_t data[]);
+void Lin_SendData(uint8_t *data);
+void Lin_DataProcess_loop(void);
+
+void SPI_Stop(SPI_HandleTypeDef *hspi);
+void SPI_Flash_Start(SPI_HandleTypeDef *hspi);
+void SPI_TFT_Start(SPI_HandleTypeDef *hspi);
+
 void Ser2CAN(void);
 uint32_t mRead_ADC1_ch(uint8_t ch);
 void Sys_tune1();
-void Sys_tune2();
-
+void Sys_tuneX(uint32_t fq);
+uint32_t PWMServo_Ag2Pulse(uint32_t ag);
+void PWMServo2_3_AGout(uint32_t ag);
+void PWMServo2_4_AGout(uint32_t ag);
+void PWMServo3_1_AGout(uint32_t ag);
+void PWMServo3_2_AGout(uint32_t ag);
+void MoC_Init();
 void MotoCtrl_PackSend12();
 //void MotoCtrl_PackSend2();
 void MotoCtrl_PackSend3();
 void MotoCtrl_PackSend4();
 void MotoCtrl_PositionLoop(int PositionX_mm, int PositionY_mm);
-
 //void CAN2Ser_Config(void);
-
+void Set_SystemReboot();
+void Clamp_Position(int *x, int *y, bool allow_reset);
+void Door_Control(void);
 uint8_t ByteEncryp(uint8_t byteData);
 
+void Motor_Protection_Init(void);
+void Motor_Protection_Reset(void);
+uint8_t Motor_Protection_Check(int16_t current_X, int16_t current_Y,
+                                int16_t target_X, int16_t target_Y);
+void Motor_Protection_EmergencyStop(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -283,14 +411,7 @@ int main(void)
 
   /* USER CODE BEGIN Init */
 
-//
-//  CAN2Ser_ID[3]=0xdf;
-//  CAN2Ser_ID[5]=0x2;
-//  CAN2Ser_ID[31]=0xff;
-//  CAN2Ser_ID[1]=0xff;
-//  CAN2Ser_ID[22]=0x11;
-//
-//  Order_MinF(32,CAN2Ser_ID);
+
 
   /* USER CODE END Init */
 
@@ -321,6 +442,11 @@ int main(void)
   MX_TIM17_Init();
   MX_TIM1_Init();
   MX_TIM15_Init();
+  MX_USART3_UART_Init();
+  MX_USART2_UART_Init();
+  MX_TIM2_Init();
+  MX_TIM3_Init();
+  MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
 
   ///////use OLED for debug msg display
@@ -336,9 +462,9 @@ int main(void)
 	HAL_FDCAN_MspInit(&hfdcan2);
 
 	Flash_SPI = &hspi1;
+	TFT_SPI = &hspi1;
 
 	TSA_Ack_Header.Identifier = 0x531;
-
 	TSA_Ack_Header.DataLength = FDCAN_DLC_BYTES_8;
 	TSA_Ack_Header.FDFormat = FDCAN_CLASSIC_CAN;	//FDCAN_FD_CAN;
 	TSA_Ack_Header.BitRateSwitch = FDCAN_BRS_OFF;	//FDCAN_BRS_ON; //
@@ -349,20 +475,7 @@ int main(void)
 	TSA_Ack_Header.MessageMarker = 0;
 
 
-	TSA_Ack_RC_Header.Identifier = 0x532;
-
-	TSA_Ack_RC_Header.DataLength = FDCAN_DLC_BYTES_8;
-	TSA_Ack_RC_Header.FDFormat = FDCAN_CLASSIC_CAN;	//FDCAN_FD_CAN;
-	TSA_Ack_RC_Header.BitRateSwitch = FDCAN_BRS_OFF;	//FDCAN_BRS_ON; //
-	TSA_Ack_RC_Header.TxFrameType = FDCAN_DATA_FRAME;	///*!< Data frame > < Remote frame */
-	TSA_Ack_RC_Header.IdType = FDCAN_STANDARD_ID;
-	TSA_Ack_RC_Header.ErrorStateIndicator = FDCAN_ESI_PASSIVE;
-	TSA_Ack_RC_Header.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
-	TSA_Ack_RC_Header.MessageMarker = 0;
-
-
 	TSA2_LS_Header.Identifier = 0x51;
-
 	TSA2_LS_Header.DataLength = FDCAN_DLC_BYTES_8;
 	TSA2_LS_Header.FDFormat = FDCAN_CLASSIC_CAN;	//FDCAN_FD_CAN;
 	TSA2_LS_Header.BitRateSwitch = FDCAN_BRS_OFF;	//FDCAN_BRS_ON; //
@@ -374,7 +487,6 @@ int main(void)
 
 
 	TSA1_ADC_Header.Identifier = 0x50;
-
 	TSA1_ADC_Header.DataLength = FDCAN_DLC_BYTES_8;
 	TSA1_ADC_Header.FDFormat = FDCAN_CLASSIC_CAN;	//FDCAN_FD_CAN;
 	TSA1_ADC_Header.BitRateSwitch = FDCAN_BRS_OFF;	//FDCAN_BRS_ON; //
@@ -385,44 +497,59 @@ int main(void)
 	TSA1_ADC_Header.MessageMarker = 0;
 
 
+	TSA_GP_IN_Header.Identifier = 0x110;
+	TSA_GP_IN_Header.DataLength = FDCAN_DLC_BYTES_8;
+	TSA_GP_IN_Header.FDFormat = FDCAN_CLASSIC_CAN;	//FDCAN_FD_CAN;
+	TSA_GP_IN_Header.BitRateSwitch = FDCAN_BRS_OFF;	//FDCAN_BRS_ON; //
+	TSA_GP_IN_Header.TxFrameType = FDCAN_DATA_FRAME;	///*!< Data frame > < Remote frame */
+	TSA_GP_IN_Header.IdType = FDCAN_STANDARD_ID;
+	TSA_GP_IN_Header.ErrorStateIndicator = FDCAN_ESI_PASSIVE;
+	TSA_GP_IN_Header.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
+	TSA_GP_IN_Header.MessageMarker = 0;
 
-	MotrCtrl_1_TxHeader.Identifier = M1_ID;
+    // M1电机
+    MotrCtrl_1_TxHeader.Identifier = M1_ID;  // ← 关键！0x0D1
+    MotrCtrl_1_TxHeader.IdType = FDCAN_STANDARD_ID;
+    MotrCtrl_1_TxHeader.TxFrameType = FDCAN_DATA_FRAME;
+    MotrCtrl_1_TxHeader.DataLength = FDCAN_DLC_BYTES_8;
+    MotrCtrl_1_TxHeader.ErrorStateIndicator = FDCAN_ESI_PASSIVE;
+    MotrCtrl_1_TxHeader.BitRateSwitch = FDCAN_BRS_OFF;
+    MotrCtrl_1_TxHeader.FDFormat = FDCAN_CLASSIC_CAN;
+    MotrCtrl_1_TxHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
+    MotrCtrl_1_TxHeader.MessageMarker = 0;
 
-	MotrCtrl_1_TxHeader.DataLength = FDCAN_DLC_BYTES_8;
-	MotrCtrl_1_TxHeader.FDFormat = FDCAN_CLASSIC_CAN;	//FDCAN_FD_CAN;
-	MotrCtrl_1_TxHeader.BitRateSwitch = FDCAN_BRS_OFF;	//FDCAN_BRS_ON; //
-	MotrCtrl_1_TxHeader.TxFrameType = FDCAN_DATA_FRAME;	///*!< Data frame > < Remote frame */
-	MotrCtrl_1_TxHeader.IdType = FDCAN_STANDARD_ID;
-	MotrCtrl_1_TxHeader.ErrorStateIndicator = FDCAN_ESI_PASSIVE;
-	MotrCtrl_1_TxHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
-	MotrCtrl_1_TxHeader.MessageMarker = 0;
+    // M2电机
+    MotrCtrl_2_TxHeader.Identifier = M2_ID;  // ← 关键！0x0D2
+    MotrCtrl_2_TxHeader.IdType = FDCAN_STANDARD_ID;
+    MotrCtrl_2_TxHeader.TxFrameType = FDCAN_DATA_FRAME;
+    MotrCtrl_2_TxHeader.DataLength = FDCAN_DLC_BYTES_8;
+    MotrCtrl_2_TxHeader.ErrorStateIndicator = FDCAN_ESI_PASSIVE;
+    MotrCtrl_2_TxHeader.BitRateSwitch = FDCAN_BRS_OFF;
+    MotrCtrl_2_TxHeader.FDFormat = FDCAN_CLASSIC_CAN;
+    MotrCtrl_2_TxHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
+    MotrCtrl_2_TxHeader.MessageMarker = 0;
 
-	MotrCtrl_2_TxHeader.Identifier = M2_ID;
-
-	MotrCtrl_2_TxHeader.DataLength = FDCAN_DLC_BYTES_8;
-	MotrCtrl_2_TxHeader.FDFormat = FDCAN_CLASSIC_CAN;	//FDCAN_FD_CAN;
-	MotrCtrl_2_TxHeader.BitRateSwitch = FDCAN_BRS_OFF;	//FDCAN_BRS_ON; //
-	MotrCtrl_2_TxHeader.TxFrameType = FDCAN_DATA_FRAME;	///*!< Data frame > < Remote frame */
-	MotrCtrl_2_TxHeader.IdType = FDCAN_STANDARD_ID;
-	MotrCtrl_2_TxHeader.ErrorStateIndicator = FDCAN_ESI_PASSIVE;
-	MotrCtrl_2_TxHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
-	MotrCtrl_2_TxHeader.MessageMarker = 0;
-
-
-	MotrCtrl_3_TxHeader.Identifier = M3_ID;
-
-	MotrCtrl_3_TxHeader.DataLength = FDCAN_DLC_BYTES_8;
-	MotrCtrl_3_TxHeader.FDFormat = FDCAN_CLASSIC_CAN;	//FDCAN_FD_CAN;
-	MotrCtrl_3_TxHeader.BitRateSwitch = FDCAN_BRS_OFF;	//FDCAN_BRS_ON; //
-	MotrCtrl_3_TxHeader.TxFrameType = FDCAN_DATA_FRAME;	///*!< Data frame > < Remote frame */
-	MotrCtrl_3_TxHeader.IdType = FDCAN_STANDARD_ID;
-	MotrCtrl_3_TxHeader.ErrorStateIndicator = FDCAN_ESI_PASSIVE;
-	MotrCtrl_3_TxHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
-	MotrCtrl_3_TxHeader.MessageMarker = 0;
-
+    // M3电机
+    MotrCtrl_3_TxHeader.Identifier = M3_ID;  // ← 关键！0x0D3
+    MotrCtrl_3_TxHeader.IdType = FDCAN_STANDARD_ID;
+    MotrCtrl_3_TxHeader.TxFrameType = FDCAN_DATA_FRAME;
+    MotrCtrl_3_TxHeader.DataLength = FDCAN_DLC_BYTES_8;
+    MotrCtrl_3_TxHeader.ErrorStateIndicator = FDCAN_ESI_PASSIVE;
+    MotrCtrl_3_TxHeader.BitRateSwitch = FDCAN_BRS_OFF;
+    MotrCtrl_3_TxHeader.FDFormat = FDCAN_CLASSIC_CAN;
+    MotrCtrl_3_TxHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
+    MotrCtrl_3_TxHeader.MessageMarker = 0;
 
 
-
+    TSA_Door_Relay_Header.Identifier = 0x002;  // 使用与电机相同的ACK ID
+    TSA_Door_Relay_Header.DataLength = FDCAN_DLC_BYTES_8;
+    TSA_Door_Relay_Header.FDFormat = FDCAN_CLASSIC_CAN;
+    TSA_Door_Relay_Header.BitRateSwitch = FDCAN_BRS_OFF;
+    TSA_Door_Relay_Header.TxFrameType = FDCAN_DATA_FRAME;
+    TSA_Door_Relay_Header.IdType = FDCAN_STANDARD_ID;
+    TSA_Door_Relay_Header.ErrorStateIndicator = FDCAN_ESI_PASSIVE;
+    TSA_Door_Relay_Header.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
+    TSA_Door_Relay_Header.MessageMarker = 0;
 ////////TIM6定时器，20ms周期
 
 	HAL_TIM_Base_Start_IT(&htim6);
@@ -454,24 +581,49 @@ int main(void)
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
 
+/////////////TempSensor
+//	TMP1075_Init(temp1075_ch , TempSensor_ADDR_ZXD );
+//	HAL_Delay(20);
+
+
+////
+	//SPI_TFT_NSS_Pin||SPI_Flash_NSS_Pin
+
+//	SPI_Stop(Flash_SPI);
+//	HAL_Delay(10);
+//	SPI_TFT_Start(Flash_SPI);
+//	HAL_Delay(50);
+
+
+
+
+
+
 //Mode check
 	bool id1,id2,id3,id4;
 	id1 = HAL_GPIO_ReadPin(IO_CFG_1_GPIO_Port,IO_CFG_1_Pin);
-	id2 = HAL_GPIO_ReadPin(GPIOA,IO_CFG_2_Pin);
-	id3 = HAL_GPIO_ReadPin(GPIOA,IO_CFG_3_Pin);
-	id4 = HAL_GPIO_ReadPin(GPIOA,IO_CFG_4_Pin);
+	id2 = HAL_GPIO_ReadPin(IO_CFG_2_GPIO_Port,IO_CFG_2_Pin);
+	id3 = HAL_GPIO_ReadPin(IO_CFG_3_GPIO_Port,IO_CFG_3_Pin);
+	id4 = HAL_GPIO_ReadPin(IO_CFG_4_GPIO_Port,IO_CFG_4_Pin);
 
 
 	Mode_ID = (id1<<3) + (id2<<2) + (id3<<1) + (id4<<0);
 
-	UART_Init(&huart1,Serial_Data_LENGTH);
-
 
 	HAL_Delay(2000);
-	//Version_A
-	char *str = "MoC ";
-	OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 0, str );
+
+	if(id1 == 0)	//id1 = 0, no RC
+	{
+		char *str = "FW: ";
+		OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 0, str );
+	}else			//id1 = 1,with RC
+	{
+		char *str = "MoC ";
+		OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 0, str );
+	}
+
 	char str1[16] = {0};
+	char str2[16] = {0};
 	itoa(Version_A,str1,10);
 	OLED_ShowString(OLED_I2C_ch ,OLED_type,4, 0, str1 );
 	OLED_ShowString(OLED_I2C_ch ,OLED_type,5, 0, ".");
@@ -479,6 +631,108 @@ int main(void)
 	OLED_ShowString(OLED_I2C_ch ,OLED_type,6, 0, str1);
 	itoa(Version_C,str1,10);
 	OLED_ShowString(OLED_I2C_ch ,OLED_type,7, 0, str1);
+
+	if (HAL_GPIO_ReadPin(SW_DOWN_GPIO_Port, SW_DOWN_Pin) == 0) // DOWN键按下
+	{
+	    OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 1, "Hold 5s Clear! ");
+	    Sys_tune1();
+
+	    uint8_t countdown = 5;
+	    bool stillPressed = true;
+
+	    // 倒计时5秒
+	    for (int i = 0; i < 5; i++)
+	    {
+	        if (HAL_GPIO_ReadPin(SW_DOWN_GPIO_Port, SW_DOWN_Pin) != 0) // 松开了
+	        {
+	            stillPressed = false;
+	            break;
+	        }
+
+	        char str_count[16];
+	        itoa(countdown, str_count, 10);
+	        OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 2, "Countdown: ");
+	        OLED_ShowString(OLED_I2C_ch, OLED_type, 11, 2, str_count);
+	        OLED_ShowString(OLED_I2C_ch, OLED_type, 13, 2, "s  ");
+
+	        HAL_Delay(1000);
+	        countdown--;
+	    }
+
+	    if (stillPressed && (HAL_GPIO_ReadPin(SW_DOWN_GPIO_Port, SW_DOWN_Pin) == 0))
+	    {
+	        // ⬅️ 清除Flash配置
+	        OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 0, "================");
+	        OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 1, "Clearing Flash! ");
+	        OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 2, "Please Wait...  ");
+	        OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 3, "================");
+
+	        Sys_tune1();  // ⬅️ 如果没有Sys_tune2就用Sys_tune1
+
+	        // ⬅️⬅️⬅️ 关键：先切换SPI到Flash模式
+	        SPI_Stop(Flash_SPI);
+	        HAL_Delay(10);
+	        SPI_Flash_Start(Flash_SPI);
+	        HAL_Delay(10);
+
+	        uint8_t clearData[4] = {0xFF, 0xFF, 0xFF, 0xFF};
+
+	        // ⬅️⬅️⬅️ 重要：每次写入前都要加写使能！
+	        SPI_Flash_WtritEnable();
+	        HAL_Delay(5);
+	        SPI_Flash_WriteSomeBytes(clearData, Sys_Addr_DispX0, sizeof(int));
+	        HAL_Delay(50);
+
+	        SPI_Flash_WtritEnable();
+	        HAL_Delay(5);
+	        SPI_Flash_WriteSomeBytes(clearData, Sys_Addr_DispX1, sizeof(int));
+	        HAL_Delay(50);
+
+	        SPI_Flash_WtritEnable();
+	        HAL_Delay(5);
+	        SPI_Flash_WriteSomeBytes(clearData, Sys_Addr_DispY0, sizeof(int));
+	        HAL_Delay(50);
+
+	        SPI_Flash_WtritEnable();
+	        HAL_Delay(5);
+	        SPI_Flash_WriteSomeBytes(clearData, Sys_Addr_DispY1, sizeof(int));
+	        HAL_Delay(50);
+
+	        OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 0, "================");
+	        OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 1, "Config Cleared! ");
+	        OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 2, "Rebooting...    ");
+	        OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 3, "================");
+
+	        Sys_tune1();
+	        HAL_Delay(2000);
+
+	        // ⬅️ 自动重启（不需要等松开按键）
+	        HAL_NVIC_SystemReset();
+	    }
+	    else
+	    {
+	        // 松开了，取消清除
+	        OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 1, "Clear Cancelled ");
+	        OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 2, "                ");
+	        HAL_Delay(1000);
+	    }
+	}
+
+//	if(id1 == 1)	//id1 = 0, no RC
+//	{
+//		if(RCtrl_Mode_0m1p == 1)
+//		{
+//			OLED_ShowString(OLED_I2C_ch ,OLED_type,14, 0, "%");
+//			OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "P/255 Control");
+//		}
+//		else
+//		{
+//			OLED_ShowString(OLED_I2C_ch ,OLED_type,14, 0, "mm");
+//			OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "Position Mode");
+//		}
+//	}
+
+	HAL_Delay(2000);
 
 //	str = "|cfg: ";
 //	OLED_ShowString(OLED_I2C_ch ,OLED_type,8, 0, str );
@@ -504,41 +758,88 @@ int main(void)
 
 
 		Ser2CAN_Msg[i].DataCycle = 0xffff;
-
-		//		FDCAN1_TxHeader.IdType = FDCAN_STANDARD_ID;
-		//		FDCAN1_TxHeader.DataLength = FDCAN_DLC_BYTES_8;
-		//		FDCAN1_TxHeader.ErrorStateIndicator = FDCAN_ESI_PASSIVE;
-		//		FDCAN1_TxHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
-		//		FDCAN1_TxHeader.MessageMarker = 0;
-		//		FDCAN1_TxHeader.TxFrameType = FDCAN_DATA_FRAME;	///*!< Data frame > < Remote frame */
 	}
 
 //	  HAL_Delay(500);
 
 
-//	OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 0, "DeviceID:");
-//	uint16_t FlashID;
-//	FlashID = SPI_Flash_GetID();
-//	itoa(FlashID,str1,16);
-//	OLED_ShowString(OLED_I2C_ch ,OLED_type,10, 0, str1);
 
 	uint8_t temp1[4],temp2[4];
 	temp1[0] = 123;
 	OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "Flash Test");
+//	while( HAL_GPIO_ReadPin(ESP_TRG_STM_GPIO_Port,ESP_TRG_STM_Pin) )
+//	{
+//		SPI_Stop(Flash_SPI);
+//		HAL_GPIO_WritePin(STM2ESP_GPIO_Port, STM2ESP_Pin, 0);
+//		OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "Flash Test ...");
+//	}
+//	HAL_GPIO_WritePin(STM2ESP_GPIO_Port, STM2ESP_Pin, 0);	//#define STM2ESP_Pin GPIO_PIN_14		#define STM2ESP_GPIO_Port GPIOE
+
+//	SPI_Stop(Flash_SPI);
+//	HAL_Delay(5);
+//
+	SPI_Flash_Start(Flash_SPI);
+	HAL_Delay(5);
+
+	SPI_Flash_WtritEnable();
+	HAL_Delay(5);
+	SPI_Flash_WriteSomeBytes(temp1, Sys_Addr_DispTest, sizeof(int));
+	HAL_Delay(5);
+	SPI_Flash_ReadBytes(temp2, Sys_Addr_DispTest, sizeof(int));
 	while(temp1[0] != temp2[0])
 	{
-		SPI_Flash_WriteSomeBytes(temp1, Sys_Addr_DispX1, sizeof(int));
-		HAL_Delay(1);
-		SPI_Flash_ReadBytes(temp2, Sys_Addr_DispX1, sizeof(int));
-		OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "Flash Test Err!");
+		OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "Flash Test Err..");
 
-		itoa(temp1[0],str1,10);
-		OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 2, str1);	//123
-		itoa(temp2[0],str1,10);
-		OLED_ShowString(OLED_I2C_ch ,OLED_type,8, 2, str1);	//0
+		SPI_Stop(Flash_SPI);
+		HAL_Delay(5);
 
+		SPI_Flash_Start(Flash_SPI);
+		HAL_Delay(5);
+
+		SPI_Flash_WriteSomeBytes(temp1, Sys_Addr_DispTest, sizeof(int));
+		HAL_Delay(5);
+		SPI_Flash_ReadBytes(temp2, Sys_Addr_DispTest, sizeof(int));
+
+
+		itoa(temp1[0],str1,16);
+		OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 2, str1);
+		itoa(temp1[1],str1,16);
+		OLED_ShowString(OLED_I2C_ch ,OLED_type,4, 2, str1);
+		itoa(temp2[0],str1,16);
+		OLED_ShowString(OLED_I2C_ch ,OLED_type,8, 2, str1);
+		itoa(temp2[1],str1,16);
+		OLED_ShowString(OLED_I2C_ch ,OLED_type,12, 2, str1);
 	}
+
+
 	OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "Flash Test OK!");
+	HAL_Delay(1000);
+
+	OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "UniqID:");
+	uint64_t UID;
+
+	HAL_Delay(1);
+	UID = SPI_Flash_GUID();
+
+	SPI_Stop(Flash_SPI);
+//	HAL_GPIO_WritePin(STM2ESP_GPIO_Port, STM2ESP_Pin, 1);
+
+	if ((UID == 0)|((UID&0xffff) == 0xffff))
+	{
+		OLED_ShowString(OLED_I2C_ch ,OLED_type,8, 1, "Error! ");
+
+		EncrypKey = 0x36;
+	}else
+	{
+		itoa(UID,str1,16);
+		OLED_ShowString(OLED_I2C_ch ,OLED_type,8, 1, str1);
+
+		EncrypKey = UID&0xff;
+	}
+
+	HAL_Delay(500);
+////
+
 
 
 //// ADC
@@ -547,7 +848,7 @@ int main(void)
     {
     	char *str0 = "ADC_Calib_Error! ";
     	OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, str0 );
-        // 校准失败，处理错�????????????????????????????????????
+        // 校准失败，处理错�????????????????????????????????????????????????????????
         Error_Handler();
         while(1);
     }
@@ -556,451 +857,139 @@ int main(void)
     HAL_Delay(20);
 	HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buffer, ADC_CHANNELS);
 
-    Web_ConnectSts = 255;
+
+	SPI_Stop(Flash_SPI);
+	HAL_Delay(10);
+	SPI_TFT_Start(Flash_SPI);
+	HAL_Delay(50);
+
+	ST7789_Init();
+	HAL_Delay(100);
+
+	ST7789_Flush(TFT_RED);
+	HAL_Delay(200);
+	ST7789_Flush(TFT_GREEN);
+	HAL_Delay(200);
+	ST7789_Flush(TFT_BLUE);
+	HAL_Delay(200);
 
 
+//    Sys_tune1();	//1000
 
-//    Sys_beep();
-    Sys_tune1();
-
-
-////42 MotorCtrl init
-
-    MotorInit_M1 = 0;
-    MotorInit_M2 = 0;
-    MotorInit_M3 = 0;
-    MotorInit_M4 = 0;
-
-
-    MotorCtrl_M1.MotorCtrl_HostID = HostID;
-    MotorCtrl_M1.MotorCtrl_FuncType = 0x01;
-    MotorCtrl_M1.MotorCtrl_FuncCode = 0x01;
-    MotorCtrl_M1.MotorCtrl_ByteData = 0x01;		//06/07
-    MotorCtrl_M1.MotorCtrl_DataCode = 0x000000;
-
-    MotorCtrl_M2.MotorCtrl_HostID = HostID;
-    MotorCtrl_M2.MotorCtrl_FuncType = 0x01;
-    MotorCtrl_M2.MotorCtrl_FuncCode = 0x01;
-    MotorCtrl_M2.MotorCtrl_ByteData = 0x01;		//06/07
-    MotorCtrl_M2.MotorCtrl_DataCode = 0x000000;
-
-    MotorInit_M1 = 1;	//init wait
-    MotorInit_M2 = 1;	//init wait
-    MotoCtrl_PackSend12();
-    HAL_Delay(500);
-
-    while((MotorInit_M1 != 2)|(MotorInit_M2 != 2))
+    for (int i = 10;i> 3 ;i--)
     {
-    	OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "M1&2 Init Wait " );
-    	HAL_Delay(500);
-    	MotoCtrl_PackSend12();
+//    	Sys_tuneX(i*300);
+    	HAL_Delay(100);
     }
 
-    OLED_ShowString(OLED_I2C_ch ,OLED_type,9, 0, "1 2" );	// 9 11 13 15
-    OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "M1&2 Init ok! " );
 
-	OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 2, "X: ");
-	itoa(M1_ID,str1,16);
-	OLED_ShowString(OLED_I2C_ch ,OLED_type,4, 2, str1);
-	itoa(TA531_RC1.TA531_RC_X_act ,str1,10);
-	OLED_ShowString(OLED_I2C_ch ,OLED_type,8, 2, str1);
+    HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_3);
+    HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_4);
+    HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
+    HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_2);
+	PWMServo2_3_AGout(0);
+	PWMServo2_4_AGout(0);
+	PWMServo3_1_AGout(0);
+	PWMServo3_2_AGout(0);
 
 
-    MotorCtrl_M3.MotorCtrl_HostID = HostID;
-    MotorCtrl_M3.MotorCtrl_FuncType = 0x01;
-    MotorCtrl_M3.MotorCtrl_FuncCode = 0x01;
-    MotorCtrl_M3.MotorCtrl_ByteData = 0x01;		//06/07
-    MotorCtrl_M3.MotorCtrl_DataCode = 0x000000;
-
-    MotorInit_M3 = 1;	//init wait
-    MotoCtrl_PackSend3();
-    HAL_Delay(500);
-
-    while(MotorInit_M3 != 2)
+    if(id1 == 1)	//MoC
     {
-    	OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "M3 Init Wait " );
-    	HAL_Delay(500);
-    	MotoCtrl_PackSend3();
+    	MoC_Init();
+    }else
+    {
+    	lvLED_Sts_TPRobot = 0;
     }
 
-    OLED_ShowString(OLED_I2C_ch ,OLED_type,13, 0, "3 " );	// 9 11 13 15
-    OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "M3 Initialized! " );
-
-	OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 3, "Y: ");
-	itoa(M3_ID,str1,16);
-	OLED_ShowString(OLED_I2C_ch ,OLED_type,4, 3, str1);
-	itoa(TA531_RC1.TA531_RC_Y_act ,str1,10);
-	OLED_ShowString(OLED_I2C_ch ,OLED_type,8, 3, str1);
-
-    OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "Check TouchPen! " );
-	HAL_GPIO_WritePin(GPIOF, KL15_RELAY_Pin, 1);	//F
-	HAL_Delay(700);
-	HAL_GPIO_WritePin(GPIOF, KL15_RELAY_Pin, 0);	//F
-    HAL_Delay(1000);
-
-
-    OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "PuhUp Rst DispXY" );
-    HAL_Delay(1000);
-
-    if (HAL_GPIO_ReadPin(GPIOB,SW_UP_Pin) == 0)////reset display xy
-	{
-		Sys_tune1();
-		OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "Hold Up 2s Reset" );
-		HAL_Delay(800);
-		if (HAL_GPIO_ReadPin(GPIOB,SW_UP_Pin) == 0)////reset display xy
-		{
-			Sys_tune1();
-			OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "Hold Up 1s Reset" );
-			HAL_Delay(800);
-			Sys_tune2();
-			OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "Release & Reset" );
-			HAL_Delay(2000);
-
-			if (HAL_GPIO_ReadPin(GPIOB,SW_UP_Pin) == 1)	// into reset display xy
-			{
-				OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "Up/Dw to Set X0" );
-				HAL_Delay(800);
-				OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 2, "X0:");
-
-				while(HAL_GPIO_ReadPin(GPIOF,SW_BUTTON_Pin) != 0)	//no push down
-				{
-					if (HAL_GPIO_ReadPin(GPIOB,SW_UP_Pin) == 0)
-					{
-						TA531_RC1.TA531_RC_X_trg = TA531_RC1.TA531_RC_X_act +5;
-
-						TA531_RC1_fg = 2;
-					}
-					else if (HAL_GPIO_ReadPin(GPIOB,SW_DOWN_Pin) == 0)
-					{
-						TA531_RC1.TA531_RC_X_trg = TA531_RC1.TA531_RC_X_act -5;
-
-						if(TA531_RC1.TA531_RC_X_trg < 0)
-						{
-							TA531_RC1.TA531_RC_X_trg = 0;
-						}
-						TA531_RC1_fg = 2;
-					}
-
-					MotoCtrl_PositionLoop(TA531_RC1.TA531_RC_X_trg , TA531_RC1.TA531_RC_Y_trg);
-					HAL_Delay(800);
-
-					itoa(TA531_RC1.TA531_RC_X_trg ,str1,10);
-					OLED_ShowString(OLED_I2C_ch ,OLED_type,3, 2, str1);
-
-				}
-
-				////push down
-				DispX0_32b = TA531_RC1.TA531_RC_X_trg;
-				DispX0[0] = TA531_RC1.TA531_RC_X_trg & 0xff;
-				DispX0[1] = (TA531_RC1.TA531_RC_X_trg >>8) & 0xff;
-				DispX0[2] = (TA531_RC1.TA531_RC_X_trg >>16) & 0xff;
-				DispX0[3] = (TA531_RC1.TA531_RC_X_trg >>24) & 0xff;
-
-				SPI_Flash_WriteSomeBytes(DispX0, Sys_Addr_DispX0, sizeof(int));
-				HAL_Delay(2);
-				uint8_t temp1[4];//temp3,temp4;
-				SPI_Flash_ReadBytes(temp1, Sys_Addr_DispX0, sizeof(int));
-				if ((temp1[0] != DispX0[0])	|(temp1[1] != DispX0[1])|(temp1[2] != DispX0[2])|(temp1[3] != DispX0[3]))
-				{
-					OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "WriteFlash Err!");
-					while((temp1[0] != DispX0[0])	|(temp1[1] != DispX0[1])|(temp1[2] != DispX0[2])|(temp1[3] != DispX0[3]))
-					{
-						SPI_Flash_WriteSomeBytes(DispX0, Sys_Addr_DispX0, sizeof(int));
-						HAL_Delay(1);
-						SPI_Flash_ReadBytes(temp1, Sys_Addr_DispX0, sizeof(int));
-					}
-					OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "WriteFlash OK!");
-				}
-
-
-				OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "Up/Dw to Set X1" );
-				HAL_Delay(800);
-				OLED_ShowString(OLED_I2C_ch ,OLED_type,7, 2, "Xmax:");
-
-				while(HAL_GPIO_ReadPin(GPIOF,SW_BUTTON_Pin) != 0)	//no push down
-				{
-					if (HAL_GPIO_ReadPin(GPIOB,SW_UP_Pin) == 0)
-					{
-						TA531_RC1.TA531_RC_X_trg = TA531_RC1.TA531_RC_X_act +5;
-
-						TA531_RC1_fg = 2;
-					}
-					else if (HAL_GPIO_ReadPin(GPIOB,SW_DOWN_Pin) == 0)
-					{
-						TA531_RC1.TA531_RC_X_trg = TA531_RC1.TA531_RC_X_act -5;
-
-						if(TA531_RC1.TA531_RC_X_trg < 0)
-						{
-							TA531_RC1.TA531_RC_X_trg = 0;
-						}
-						TA531_RC1_fg = 2;
-					}
-
-					MotoCtrl_PositionLoop(TA531_RC1.TA531_RC_X_trg , TA531_RC1.TA531_RC_Y_trg);
-					HAL_Delay(800);
-
-					itoa(TA531_RC1.TA531_RC_X_trg ,str1,10);
-					OLED_ShowString(OLED_I2C_ch ,OLED_type,12, 2, str1);
-
-				}
-
-
-				////push down
-				DispX1_32b = TA531_RC1.TA531_RC_X_trg;
-				DispX1[0] = TA531_RC1.TA531_RC_X_trg & 0xff;
-				DispX1[1] = (TA531_RC1.TA531_RC_X_trg >>8) & 0xff;
-				DispX1[2] = (TA531_RC1.TA531_RC_X_trg >>16) & 0xff;
-				DispX1[3] = (TA531_RC1.TA531_RC_X_trg >>24) & 0xff;
-
-				SPI_Flash_WriteSomeBytes(DispX1, Sys_Addr_DispX1, sizeof(int));
-				HAL_Delay(2);
-//				int temp1;//temp3,temp4;
-				SPI_Flash_ReadBytes(temp1, Sys_Addr_DispX1, sizeof(int));
-				if ((temp1[0] != DispX1[0])	|(temp1[1] != DispX1[1])|(temp1[2] != DispX1[2])|(temp1[3] != DispX1[3]))
-				{
-					OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "WriteFlash Err!");
-					while((temp1[0] != DispX1[0])	|(temp1[1] != DispX1[1])|(temp1[2] != DispX1[2])|(temp1[3] != DispX1[3]))
-					{
-						SPI_Flash_WriteSomeBytes(DispX1, Sys_Addr_DispX1, sizeof(int));
-						HAL_Delay(1);
-						SPI_Flash_ReadBytes(temp1, Sys_Addr_DispX1, sizeof(int));
-					}
-					OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "WriteFlash OK!");
-				}
-
-
-				OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "L/R to Set Y0" );
-				HAL_Delay(800);
-				OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 3, "Y0:");
-
-				while(HAL_GPIO_ReadPin(GPIOF,SW_BUTTON_Pin) != 0)	//no push down
-				{
-					if (HAL_GPIO_ReadPin(GPIOB,SW_LEFT_Pin) == 0)
-					{
-						TA531_RC1.TA531_RC_Y_trg = TA531_RC1.TA531_RC_Y_act -5;
-
-						if(TA531_RC1.TA531_RC_Y_trg < 0)
-						{
-							TA531_RC1.TA531_RC_Y_trg = 0;
-						}
-
-						TA531_RC1_fg = 2;
-					}
-					else if (HAL_GPIO_ReadPin(GPIOF,SW_RIGHT_Pin) == 0)
-					{
-						TA531_RC1.TA531_RC_Y_trg = TA531_RC1.TA531_RC_Y_act +5;
-
-						TA531_RC1_fg = 2;
-
-					}
-
-					MotoCtrl_PositionLoop(TA531_RC1.TA531_RC_X_trg , TA531_RC1.TA531_RC_Y_trg);
-					HAL_Delay(800);
-
-					itoa(TA531_RC1.TA531_RC_Y_trg ,str1,10);
-					OLED_ShowString(OLED_I2C_ch ,OLED_type,3, 3, str1);
-
-				}
-
-				////push down
-				DispY0_32b = TA531_RC1.TA531_RC_Y_trg;
-				DispY0[0] = TA531_RC1.TA531_RC_Y_trg & 0xff;
-				DispY0[1] = (TA531_RC1.TA531_RC_Y_trg >>8) & 0xff;
-				DispY0[2] = (TA531_RC1.TA531_RC_Y_trg >>16) & 0xff;
-				DispY0[3] = (TA531_RC1.TA531_RC_Y_trg >>24) & 0xff;
-				SPI_Flash_WriteSomeBytes(DispY0, Sys_Addr_DispY0, sizeof(int));
-				HAL_Delay(2);
-//				int temp1;//temp3,temp4;
-				SPI_Flash_ReadBytes(temp1, Sys_Addr_DispY0, sizeof(int));
-				if ((temp1[0] != DispY0[0])	|(temp1[1] != DispY0[1])|(temp1[2] != DispY0[2])|(temp1[3] != DispY0[3]))
-				{
-					OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "WriteFlash Err!");
-					while ((temp1[0] != DispY0[0])	|(temp1[1] != DispY0[1])|(temp1[2] != DispY0[2])|(temp1[3] != DispY0[3]))
-					{
-						SPI_Flash_WriteSomeBytes(DispY0, Sys_Addr_DispY0, sizeof(int));
-						HAL_Delay(1);
-						SPI_Flash_ReadBytes(temp1, Sys_Addr_DispY0, sizeof(int));
-					}
-					OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "WriteFlash OK!");
-				}
-
-
-				OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "L/R to Set Ymax" );
-				HAL_Delay(800);
-				OLED_ShowString(OLED_I2C_ch ,OLED_type,7, 3, "Ymax:");
-
-				while(HAL_GPIO_ReadPin(GPIOF,SW_BUTTON_Pin) != 0)	//no push down
-				{
-					if (HAL_GPIO_ReadPin(GPIOB,SW_LEFT_Pin) == 0)
-					{
-						TA531_RC1.TA531_RC_Y_trg = TA531_RC1.TA531_RC_Y_act -5;
-
-						if(TA531_RC1.TA531_RC_Y_trg < 0)
-						{
-							TA531_RC1.TA531_RC_Y_trg = 0;
-						}
-
-						TA531_RC1_fg = 2;
-					}
-					else if (HAL_GPIO_ReadPin(GPIOF,SW_RIGHT_Pin) == 0)
-					{
-						TA531_RC1.TA531_RC_Y_trg = TA531_RC1.TA531_RC_Y_act +5;
-
-						TA531_RC1_fg = 2;
-
-					}
-
-					MotoCtrl_PositionLoop(TA531_RC1.TA531_RC_X_trg , TA531_RC1.TA531_RC_Y_trg);
-					HAL_Delay(800);
-
-					itoa(TA531_RC1.TA531_RC_Y_trg ,str1,10);
-					OLED_ShowString(OLED_I2C_ch ,OLED_type,12, 3, str1);
-
-				}
-				////push down
-				DispY1_32b = TA531_RC1.TA531_RC_Y_trg;
-				DispY1[0] = TA531_RC1.TA531_RC_Y_trg & 0xff;
-				DispY1[1] = (TA531_RC1.TA531_RC_Y_trg >>8) & 0xff;
-				DispY1[2] = (TA531_RC1.TA531_RC_Y_trg >>16) & 0xff;
-				DispY1[3] = (TA531_RC1.TA531_RC_Y_trg >>24) & 0xff;
-				SPI_Flash_WriteSomeBytes(DispY1, Sys_Addr_DispY1, sizeof(int));
-				HAL_Delay(2);
-//				int temp1;//temp3,temp4;
-				SPI_Flash_ReadBytes(temp1, Sys_Addr_DispY1, sizeof(int));
-				if ((temp1[0] != DispY1[0])	|(temp1[1] != DispY1[1])|(temp1[2] != DispY1[2])|(temp1[3] != DispY1[3]))
-				{
-					OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "WriteFlash Err!");
-					while((temp1[0] != DispY1[0])	|(temp1[1] != DispY1[1])|(temp1[2] != DispY1[2])|(temp1[3] != DispY1[3]))
-					{
-						SPI_Flash_WriteSomeBytes(DispY1, Sys_Addr_DispY1, sizeof(int));
-						HAL_Delay(1);
-						SPI_Flash_ReadBytes(temp1, Sys_Addr_DispY1, sizeof(int));
-					}
-					OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "WriteFlash OK!");
-				}
-
-
-				////Display Area reset finish		//DispX0,DispX1,DispY0,DispY1;
-
-				OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "Reset XY finish!");
-
-
-
-
-				TA531_RC1.TA531_RC_X_trg =	DispX0_32b;
-				TA531_RC1.TA531_RC_Y_trg =	DispY0_32b;
-//				TA531_RC1.TA531_RC_Z_code = 1;
-//				TA531_RC1.TA531_RC_Z_code2 = 0;
-				TA531_RC1_fg = 2;
-				MotoCtrl_PositionLoop(TA531_RC1.TA531_RC_X_trg , TA531_RC1.TA531_RC_Y_trg);
-
-				HAL_GPIO_WritePin(GPIOF, KL15_RELAY_Pin, 1);	//touch pen push
-				HAL_Delay(700);
-				HAL_GPIO_WritePin(GPIOF, KL15_RELAY_Pin, 0);	//touch pen release
-			    HAL_Delay(1000);
-
-
-				TA531_RC1.TA531_RC_X_trg =	DispX1_32b;
-				TA531_RC1.TA531_RC_Y_trg =	DispY1_32b;
-				TA531_RC1_fg = 2;
-				MotoCtrl_PositionLoop(TA531_RC1.TA531_RC_X_trg , TA531_RC1.TA531_RC_Y_trg);
-
-				HAL_GPIO_WritePin(GPIOF, KL15_RELAY_Pin, 1);	//touch pen push
-				HAL_Delay(700);
-				HAL_GPIO_WritePin(GPIOF, KL15_RELAY_Pin, 0);	//touch pen release
-			    HAL_Delay(1000);
-
-			}	//finish reset display xy
-		}	//reset display xy comfirm
-	}	//reset display xy comfirm
-    else
-    {	//DispX0,DispX1,DispY0,DispY1;
-    	SPI_Flash_ReadBytes(DispX0, Sys_Addr_DispX0, sizeof(int));
-    	SPI_Flash_ReadBytes(DispY0, Sys_Addr_DispY0, sizeof(int));
-    	SPI_Flash_ReadBytes(DispX1, Sys_Addr_DispX1, sizeof(int));
-    	SPI_Flash_ReadBytes(DispY1, Sys_Addr_DispY1, sizeof(int));
-
-    	DispX0_32b = DispX0[0] + (DispX0[1]<<8) + (DispX0[2]<<16) + (DispX0[3]<<24);
-    	DispX1_32b = DispX1[0] + (DispX1[1]<<8) + (DispX1[2]<<16) + (DispX1[3]<<24);
-    	DispY0_32b = DispY0[0] + (DispY0[1]<<8) + (DispY0[2]<<16) + (DispY0[3]<<24);
-    	DispY1_32b = DispY1[0] + (DispY1[1]<<8) + (DispY1[2]<<16) + (DispY1[3]<<24);
-
-    	HAL_Delay(10);
-    	OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "Read XY fm Flash");
-    	HAL_Delay(200);
-
-    	if ((DispX0_32b > 0 ) &(DispX0_32b < DispX1_32b )&(DispX1_32b < XmaxLimit )&(DispY0_32b > 0) &(DispY0_32b < DispY1_32b) &(DispY1_32b < YmaxLimit))
-    	{
-    		OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "XY Check Pass!");
-    	}
-    	else
-    	{
-    		OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "XY Check Fail!");
-    		Sys_tune1();
-    		OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 2, "Pls Reboot &");
-    		Sys_tune1();
-    		OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 3, "Reset XY Area");
-    		Sys_tune2();
-
-    		while(1);
-    	}
-    }
-
-//////finish reset display xy
-
-
-	TA531_RC1_fg = 2;
-	TA531_RC1.TA531_RC_X_trg = 0;
-	TA531_RC1.TA531_RC_Y_trg = 0;
-	MotoCtrl_PositionLoop(TA531_RC1.TA531_RC_X_trg , TA531_RC1.TA531_RC_Y_trg);
+//    Set_SystemReboot();
 
+
+
+
+// 启动LIN接收
+    HAL_UART_Receive_IT(&huart1,u1RxData,LIN_Data_LENGTH);
+    HAL_UART_Receive_IT(&huart2,u2RxData,LIN_Data_LENGTH);
+    HAL_UART_Receive_IT(&huart3,u3RxData,LIN_Data_LENGTH);
+
+
+////// LIN init
+
+	HAL_GPIO_WritePin(LIN1_EN_GPIO_Port, LIN1_EN_Pin, 1);
+	HAL_GPIO_WritePin(LIN2_EN_GPIO_Port, LIN2_EN_Pin, 1);
+	HAL_GPIO_WritePin(LIN3_EN_GPIO_Port, LIN3_EN_Pin, 1);
+//	// 解除LIN收发器复位（NRES低电平有效，拉高解除复位）
+//	HAL_GPIO_WritePin(LIN1_NRES_GPIO_Port, LIN1_NRES_Pin, 1);
+//	HAL_GPIO_WritePin(LIN2_NRES_GPIO_Port, LIN2_NRES_Pin, 1);
+//	HAL_GPIO_WritePin(LIN3_NRES_GPIO_Port, LIN3_NRES_Pin, 1);
+
+
+//	////Init XL9555
+//	XL9555_Init( XL9555_1_addr_write , 1 , 1 );	//in in //out out
+//	XL9555_Init( XL9555_2_addr_write , 1 , 1 );	//in in //out out
+
+
+///////////lvgl Init
+	lv_init();
+
+	lv_port_disp_init();
+	lv_port_indev_init();
+
+	////// use gui_guider
+	setup_ui(&guider_ui);
+	events_init(&guider_ui);
+
+
+	itoa(Version_A ,str1,10);
+	lv_label_set_text(guider_ui.screen_label_A, str1);
+	itoa(Version_B ,str1,10);
+	lv_label_set_text(guider_ui.screen_label_B, str1);
+	itoa(Version_C ,str1,10);
+	lv_label_set_text(guider_ui.screen_label_C, str1);
+
+
+	SPI_Stop(Flash_SPI);
+	HAL_Delay(10);
+	SPI_TFT_Start(Flash_SPI);
+	HAL_Delay(50);
+
+	lv_task_handler();
+
+	Motor_Protection_Init();
 
 	while (1)
 	{
-		////
-		OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "Rds x");
-		itoa(TA531_RC1_x_ready ,str1,10);
-		OLED_ShowString(OLED_I2C_ch ,OLED_type,5, 1, str1);
-		OLED_ShowString(OLED_I2C_ch ,OLED_type,6, 1, "y");
-		itoa(TA531_RC1_y_ready ,str1,10);
-		OLED_ShowString(OLED_I2C_ch ,OLED_type,7, 1, str1);
-		OLED_ShowString(OLED_I2C_ch ,OLED_type,8, 1, "z");
-		itoa(TA531_RC1_z_ready ,str1,10);
-		OLED_ShowString(OLED_I2C_ch ,OLED_type,9, 1, str1);
-		OLED_ShowString(OLED_I2C_ch ,OLED_type,12, 1, "Fg");
-		itoa(TA531_RC1_fg ,str1,10);
-		OLED_ShowString(OLED_I2C_ch ,OLED_type,15, 1, str1);
+	    Door_Control();
 
+		if(Remote_state == 1 )	//LIN simulate or real
+		{
+			HAL_GPIO_WritePin(LIN_RELAY_GPIO_Port, LIN_RELAY_Pin, 1);
 
-		if ((TA531_RC1.TA531_RC_X_act == TA531_RC1.TA531_RC_X_trg))
+		}else
 		{
-			TA531_RC1_x_ready = 1;
-		}
-		else
-		{
-			TA531_RC1_x_ready = 0;
-		}
-		if ((TA531_RC1.TA531_RC_Y_act == TA531_RC1.TA531_RC_Y_trg))
-		{
-			TA531_RC1_y_ready = 1;
-		}
-		else
-		{
-			TA531_RC1_y_ready = 0;
+			HAL_GPIO_WritePin(LIN_RELAY_GPIO_Port, LIN_RELAY_Pin, 0);
 		}
 
 
-		while ((TA531_RC1_fg == 2)&((TA531_RC1_x_ready& TA531_RC1_y_ready) !=1 ))
-		{
+		Lin_DataProcess_loop();
 
-			MotoCtrl_PositionLoop(TA531_RC1.TA531_RC_X_trg , TA531_RC1.TA531_RC_Y_trg);
 
-			itoa(TA531_RC1.TA531_RC_X_trg ,str1,10);
-			OLED_ShowString(OLED_I2C_ch ,OLED_type,13, 2, str1);
-			itoa(TA531_RC1.TA531_RC_Y_trg ,str1,10);
-			OLED_ShowString(OLED_I2C_ch ,OLED_type,13, 3, str1);
 
-			HAL_Delay(100);
+	    if(id1 == 1)	//MoC
+	    {
+//			////
+//			OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "Rds x");
+//			itoa(TA531_RC1_x_ready ,str1,10);
+//			OLED_ShowString(OLED_I2C_ch ,OLED_type,5, 1, str1);
+//			OLED_ShowString(OLED_I2C_ch ,OLED_type,6, 1, "y");
+//			itoa(TA531_RC1_y_ready ,str1,10);
+//			OLED_ShowString(OLED_I2C_ch ,OLED_type,7, 1, str1);
+//			OLED_ShowString(OLED_I2C_ch ,OLED_type,8, 1, "z");
+//			itoa(TA531_RC1_z_ready ,str1,10);
+//			OLED_ShowString(OLED_I2C_ch ,OLED_type,9, 1, str1);
+//			OLED_ShowString(OLED_I2C_ch ,OLED_type,12, 1, "Fg");
+//			itoa(TA531_RC1_fg ,str1,10);
+//			OLED_ShowString(OLED_I2C_ch ,OLED_type,15, 1, str1);
+
 
 			if ((TA531_RC1.TA531_RC_X_act == TA531_RC1.TA531_RC_X_trg))
 			{
@@ -1018,324 +1007,981 @@ int main(void)
 			{
 				TA531_RC1_y_ready = 0;
 			}
-		}
 
-//		MotoCtrl_PositionLoop(TA531_RC1.TA531_RC_X_trg , TA531_RC1.TA531_RC_Y_trg);
-//		HAL_Delay(20);
+			Motor_Protection_Reset();
+			Motor_Protection.last_X_pos = TA531_RC1.TA531_RC_X_act;
+			Motor_Protection.last_Y_pos = TA531_RC1.TA531_RC_Y_act;
 
-
-		if((TA531_RC1_x_ready == 1 )&(TA531_RC1_y_ready == 1 )&(TA531_RC1_fg < 3) )
-		{	//reach 1st point
-
-			itoa(TA531_RC1.TA531_RC_X_act ,str1,10);
-			OLED_ShowString(OLED_I2C_ch ,OLED_type,8, 2, str1);
-			itoa(TA531_RC1.TA531_RC_Y_act ,str1,10);
-			OLED_ShowString(OLED_I2C_ch ,OLED_type,8, 3, str1);
-
-
-			if(TA531_RC1.TA531_RC_Z_code > 0)	//(TA531_RC1.TA531_RC_Z_code2 != TA531_RC1.TA531_RC_Z_code)
+			while ((TA531_RC1_fg == 2)&((TA531_RC1_x_ready& TA531_RC1_y_ready) !=1 ))
 			{
-				switch(TA531_RC1.TA531_RC_Z_code)
+				MotoCtrl_PositionLoop(TA531_RC1.TA531_RC_X_trg , TA531_RC1.TA531_RC_Y_trg);
+
+//				itoa(TA531_RC1.TA531_RC_X_trg ,str1,10);
+//				OLED_ShowString(OLED_I2C_ch ,OLED_type,6, 2, str1);
+//				itoa(TA531_RC1.TA531_RC_Y_trg ,str1,10);
+//				OLED_ShowString(OLED_I2C_ch ,OLED_type,12, 2, str1);
+
+				HAL_Delay(100);
+
+				uint8_t protection_status = Motor_Protection_Check(
+				        TA531_RC1.TA531_RC_X_act,
+				        TA531_RC1.TA531_RC_Y_act,
+				        TA531_RC1.TA531_RC_X_trg,
+				        TA531_RC1.TA531_RC_Y_trg
+				    );
+
+				    if (protection_status != 0) {
+				        Motor_Protection_EmergencyStop();
+				        break;
+				    }
+
+				if ((TA531_RC1.TA531_RC_X_act == TA531_RC1.TA531_RC_X_trg))
 				{
-					case 0:		//none
-						HAL_GPIO_WritePin(GPIOF, KL15_RELAY_Pin, 0);
-						break;
-					case 1:
-						HAL_GPIO_WritePin(GPIOF, KL15_RELAY_Pin, 1);	//F
-						HAL_Delay(250);
-						break;
-					case 2:
-						HAL_GPIO_WritePin(GPIOF, KL15_RELAY_Pin, 1);	//F
-						HAL_Delay(2000);
-						break;
-					case 3:
-						HAL_GPIO_WritePin(GPIOF, KL15_RELAY_Pin, 1);	//F
-						HAL_Delay(5000);
-						break;
+					TA531_RC1_x_ready = 1;
 				}
-
-				if ((TA531_RC1.TA531_RC_X_Mov != 0)|(TA531_RC1.TA531_RC_Y_Mov != 0))
+				else
 				{
-					MotoCtrl_PositionLoop((int)(TA531_RC1.TA531_RC_X_trg + TA531_RC1.TA531_RC_X_Mov), (int)(TA531_RC1.TA531_RC_Y_trg  + TA531_RC1.TA531_RC_Y_Mov));
-					HAL_Delay(1200);
+					TA531_RC1_x_ready = 0;
 				}
-
-				HAL_GPIO_WritePin(GPIOF, KL15_RELAY_Pin, 0);	//F
-				TA531_RC1.TA531_RC_Z_code2 = TA531_RC1.TA531_RC_Z_code;		// 0
-				TA531_RC1.TA531_RC_X_Mov = 0;
-				TA531_RC1.TA531_RC_Y_Mov = 0;
-
-
-				TA531_RC1.TA531_RC_Z_code = 0;
+				if ((TA531_RC1.TA531_RC_Y_act == TA531_RC1.TA531_RC_Y_trg))
+				{
+					TA531_RC1_y_ready = 1;
+				}
+				else
+				{
+					TA531_RC1_y_ready = 0;
+				}
 			}
 
-			if (TA531_RC1.TA531_RC_Reset == 1)
-			{
-				TA531_RC1.TA531_RC_X_trg = 0;
-				TA531_RC1.TA531_RC_Y_trg = 0;
-				MotoCtrl_PositionLoop( 0 , 0 );
-				HAL_Delay(1000);
+
+
+			if((TA531_RC1_x_ready == 1 )&(TA531_RC1_y_ready == 1 )&(TA531_RC1_fg < 3) )
+			{	//reach 1st point
+
+//				itoa(TA531_RC1.TA531_RC_X_act ,str1,10);
+//				OLED_ShowString(OLED_I2C_ch ,OLED_type,6, 3, str1);
+//				itoa(TA531_RC1.TA531_RC_Y_act ,str1,10);
+//				OLED_ShowString(OLED_I2C_ch ,OLED_type,12, 3, str1);
+
+
+				if(TA531_RC1.TA531_RC_Z_code > 0)	//(TA531_RC1.TA531_RC_Z_code2 != TA531_RC1.TA531_RC_Z_code)
+				{
+					switch(TA531_RC1.TA531_RC_Z_code)
+					{
+						case 0:		//none
+							HAL_GPIO_WritePin(KL15_RELAY_GPIO_Port, KL15_RELAY_Pin, 0);
+							break;
+						case 1:
+							HAL_GPIO_WritePin(KL15_RELAY_GPIO_Port, KL15_RELAY_Pin, 1);	//F
+							HAL_Delay(250);
+							break;
+						case 2:
+							HAL_GPIO_WritePin(KL15_RELAY_GPIO_Port, KL15_RELAY_Pin, 1);	//F
+							HAL_Delay(500);
+							break;
+						case 3:
+							HAL_GPIO_WritePin(KL15_RELAY_GPIO_Port, KL15_RELAY_Pin, 1);	//F
+							HAL_Delay(500);
+							break;
+					}
+
+					if ((TA531_RC1.TA531_RC_X_Mov != 0)|(TA531_RC1.TA531_RC_Y_Mov != 0))
+					{
+					    int temp_x = (int)(TA531_RC1.TA531_RC_X_trg + TA531_RC1.TA531_RC_X_Mov);
+					    int temp_y = (int)(TA531_RC1.TA531_RC_Y_trg + TA531_RC1.TA531_RC_Y_Mov);
+					    Clamp_Position(&temp_x, &temp_y, false);  // ← 添加限制
+					    MotoCtrl_PositionLoop(temp_x, temp_y);
+					    HAL_Delay(500);
+					}
+
+					HAL_GPIO_WritePin(KL15_RELAY_GPIO_Port, KL15_RELAY_Pin, 0);	//F
+					TA531_RC1.TA531_RC_Z_code2 = TA531_RC1.TA531_RC_Z_code;		// 0
+					TA531_RC1.TA531_RC_X_Mov = 0;
+					TA531_RC1.TA531_RC_Y_Mov = 0;
+
+					TA531_RC1.TA531_RC_Z_code = 0;
+				}
+
+				if (TA531_RC1.TA531_RC_Reset == 1)
+				    {
+				        Motor_Protection_Reset();  // ← 新增
+				        Motor_Protection.last_X_pos = TA531_RC1.TA531_RC_X_act;  // ← 新增
+				        Motor_Protection.last_Y_pos = TA531_RC1.TA531_RC_Y_act;  // ← 新增
+
+				        TA531_RC1.TA531_RC_X_trg = 0;
+				        TA531_RC1.TA531_RC_Y_trg = 0;
+				        MotoCtrl_PositionLoop( 0 , 0 );
+				        HAL_Delay(500);
+
+				        // 检查复位是否成功（可选）
+				        if (abs(TA531_RC1.TA531_RC_X_act) > 10 ||
+				            abs(TA531_RC1.TA531_RC_Y_act) > 10) {
+				            Motor_Protection.protection_triggered = 1;
+				            Motor_Protection.error_type = 2;
+				            Motor_Protection_EmergencyStop();
+				        }
+				    }
+
+				TA531_RC1_fg = 3;
+				TA531_Lock = 0;
+				TA531_RC1.TA531_RC_Reset = 0;  // 清除复位标志 ← 关键！
+				TA531_RC1.TA531_RC_Z_code = 0; // 清除Z轴动作标志
+				TA531_RC1.TA531_RC_X_Mov = 0;  // 清除移动偏移
+				TA531_RC1.TA531_RC_Y_Mov = 0;  // 清除移动偏移
+				// ==============================================
+
+				TSA_Ack_RC_DATA[0] = TA531_RC1_Ack & 0x0f;
+				TSA_Ack_RC_DATA[3] = TA531_RC1.TA531_RC_X_act & 0xff;
+				TSA_Ack_RC_DATA[4] = (TA531_RC1.TA531_RC_X_act >> 8) & 0xff;
+				TSA_Ack_RC_DATA[5] = TA531_RC1.TA531_RC_Y_act & 0xff;
+				TSA_Ack_RC_DATA[6] = (TA531_RC1.TA531_RC_Y_act >> 8) & 0xff;
+				TSA_Ack_RC_DATA[7] = 0xff;
+
+				HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TSA_Ack_RC_Header, TSA_Ack_RC_DATA);
+				lvLED_Sts_TPRobot = 1;
 			}
 
-			TA531_RC1_fg = 3;
+			if (TA531_Lock == 0)
+			{
+			    if ((SW_UP == 1)&(SW_UP_pre == 1))
+			    {
+			        OLED_ShowString(OLED_I2C_ch ,OLED_type,10, 1, "Go X+");
+			        TA531_RC1.TA531_RC_X_trg = TA531_RC1.TA531_RC_X_act +50;
+			        Clamp_Position(&TA531_RC1.TA531_RC_X_trg, &TA531_RC1.TA531_RC_Y_trg, false);  // ← 添加限制
+			        TA531_RC1_fg = 2;
+			    }
+			    else if ((SW_UP == 1)&(SW_UP_pre == 0))
+			    {
+			        OLED_ShowString(OLED_I2C_ch ,OLED_type,10, 1, "Go X+");
+			        TA531_RC1.TA531_RC_X_trg = TA531_RC1.TA531_RC_X_act +20;
+			        Clamp_Position(&TA531_RC1.TA531_RC_X_trg, &TA531_RC1.TA531_RC_Y_trg, false);  // ← 添加限制
+			        TA531_RC1_fg = 2;
+			    }
+			    else if ((SW_DW == 1)&(SW_DW_pre == 1))
+			    {
+			        OLED_ShowString(OLED_I2C_ch ,OLED_type,10, 1, "Go X-");
+			        TA531_RC1.TA531_RC_X_trg = TA531_RC1.TA531_RC_X_act -50;
 
-			TSA_Ack_RC_DATA[0] = TA531_RC1_Ack & 0x0f;
-			TSA_Ack_RC_DATA[3] = TA531_RC1.TA531_RC_X_act & 0xff;
-			TSA_Ack_RC_DATA[4] = (TA531_RC1.TA531_RC_X_act >> 8) & 0xff;
-			TSA_Ack_RC_DATA[5] = TA531_RC1.TA531_RC_Y_act & 0xff;
-			TSA_Ack_RC_DATA[6] = (TA531_RC1.TA531_RC_Y_act >> 8) & 0xff;
-			TSA_Ack_RC_DATA[7] = 0xff;
+			        if(TA531_RC1.TA531_RC_X_trg < 0)
+			        {
+			            TA531_RC1.TA531_RC_X_trg = 0;
+			        }
+			        Clamp_Position(&TA531_RC1.TA531_RC_X_trg, &TA531_RC1.TA531_RC_Y_trg, false);  // ← 添加限制
+			        TA531_RC1_fg = 2;
+			    }
+			    else if ((SW_DW == 1)&(SW_DW_pre == 0))
+			    {
+			        OLED_ShowString(OLED_I2C_ch ,OLED_type,10, 1, "Go X-");
+			        TA531_RC1.TA531_RC_X_trg = TA531_RC1.TA531_RC_X_act -20;
 
-			HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TSA_Ack_RC_Header, TSA_Ack_RC_DATA);
-		}
+			        if(TA531_RC1.TA531_RC_X_trg < 0)
+			        {
+			            TA531_RC1.TA531_RC_X_trg = 0;
+			        }
+			        Clamp_Position(&TA531_RC1.TA531_RC_X_trg, &TA531_RC1.TA531_RC_Y_trg, false);  // ← 添加限制
+			        TA531_RC1_fg = 2;
+			    }
+			    else if ((SW_LEFT == 1)&(SW_LEFT_pre == 1))
+			    {
+			        OLED_ShowString(OLED_I2C_ch ,OLED_type,10, 1, "Go Y-");
+			        TA531_RC1.TA531_RC_Y_trg = TA531_RC1.TA531_RC_Y_act -50;
 
-		if (TA531_Lock == 0)
+			        if(TA531_RC1.TA531_RC_Y_trg < 0)
+			        {
+			            TA531_RC1.TA531_RC_Y_trg = 0;
+			        }
+			        Clamp_Position(&TA531_RC1.TA531_RC_X_trg, &TA531_RC1.TA531_RC_Y_trg, false);  // ← 添加限制
+			        TA531_RC1_fg = 2;
+			    }
+			    else if ((SW_LEFT == 1)&(SW_LEFT_pre == 0))
+			    {
+			        OLED_ShowString(OLED_I2C_ch ,OLED_type,10, 1, "Go Y-");
+			        TA531_RC1.TA531_RC_Y_trg = TA531_RC1.TA531_RC_Y_act -20;
+
+			        if(TA531_RC1.TA531_RC_Y_trg < 0)
+			        {
+			            TA531_RC1.TA531_RC_Y_trg = 0;
+			        }
+			        Clamp_Position(&TA531_RC1.TA531_RC_X_trg, &TA531_RC1.TA531_RC_Y_trg, false);  // ← 添加限制
+			        TA531_RC1_fg = 2;
+			    }
+			    else if ((SW_RIGHT == 1)&(SW_RIGHT_pre == 1))
+			    {
+			        OLED_ShowString(OLED_I2C_ch ,OLED_type,10, 1, "Go Y+");
+			        TA531_RC1.TA531_RC_Y_trg = TA531_RC1.TA531_RC_Y_act +50;
+			        Clamp_Position(&TA531_RC1.TA531_RC_X_trg, &TA531_RC1.TA531_RC_Y_trg, false);  // ← 添加限制
+			        TA531_RC1_fg = 2;
+			    }
+			    else if ((SW_RIGHT == 1)&(SW_RIGHT_pre == 0))
+			    {
+			        OLED_ShowString(OLED_I2C_ch ,OLED_type,10, 1, "Go Y+");
+			        TA531_RC1.TA531_RC_Y_trg = TA531_RC1.TA531_RC_Y_act +20;
+			        Clamp_Position(&TA531_RC1.TA531_RC_X_trg, &TA531_RC1.TA531_RC_Y_trg, false);  // ← 添加限制
+			        TA531_RC1_fg = 2;
+			    }
+			    else if (SW_BUTTON == 1)
+			    {
+			        OLED_ShowString(OLED_I2C_ch ,OLED_type,10, 1, "Push!");
+
+			        TA531_RC1.TA531_RC_Z_code = 1;
+			        TA531_RC1.TA531_RC_Z_code2 = 0;
+
+			        TA531_RC1_fg = 2;
+			    }
+			}
+
+	    }	//	end if MoC
+
+
+/////////// XL9555
+//	    uint8_t XL9555_tempdata;
+//	    XL9555_tempdata = XL9555_Read(XL9555_1_addr_read, 0);
+//		itoa(XL9555_tempdata,str1,2);
+//		OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 3, str1);
+//
+//	    XL9555_tempdata = XL9555_Read(XL9555_1_addr_read, 1);
+//		itoa(XL9555_tempdata,str1,2);
+//		OLED_ShowString(OLED_I2C_ch ,OLED_type,8, 3, str1);
+//
+//
+//		//TSA_GP_IN_DATA
+
+
+///////// Light Sensor
+		TA531SysEnv.TA531_env_LightA1 = adc_buffer[0] *255 /4095;
+		TA531SysEnv.TA531_env_LightA2 = adc_buffer[1] *255 /4095;
+		TA531SysEnv.TA531_env_LightA3 = adc_buffer[2] *255 /4095;
+		TA531SysEnv.TA531_env_LightA4 = adc_buffer[3] *255 /4095;
+
+
+//	    TA531SysEnv.TA531_env_LightA1 = 255 - (adc_buffer[0] *255 /4095);
+//	    TA531SysEnv.TA531_env_LightA2 = 255 - (adc_buffer[1] *255 /4095);
+//	    TA531SysEnv.TA531_env_LightA3 = 255 - (adc_buffer[2] *255 /4095);
+//	    TA531SysEnv.TA531_env_LightA4 = 255 - (adc_buffer[3] *255 /4095);
+
+		if (TA531SysEnv.TA531_env_LightA1 <	LightSensr_Gate)
 		{
-			if (HAL_GPIO_ReadPin(GPIOB,SW_UP_Pin) == 0)
+			if (TA531SysEnv.TA531_env_LightA1 <	LightSensr_Gate/2)
 			{
-				OLED_ShowString(OLED_I2C_ch ,OLED_type,10, 1, "Go X+");
-
-				TA531_RC1.TA531_RC_X_trg = TA531_RC1.TA531_RC_X_act +50;
-
-				TA531_RC1_fg = 2;
-
-//						TA531_RC1_x_ready = 0;
-//						TA531_RC1_y_ready = 0;
-			}
-			else if (HAL_GPIO_ReadPin(GPIOB,SW_DOWN_Pin) == 0)
-			{
-				OLED_ShowString(OLED_I2C_ch ,OLED_type,10, 1, "Go X-");
-
-				TA531_RC1.TA531_RC_X_trg = TA531_RC1.TA531_RC_X_act -20;
-
-				if(TA531_RC1.TA531_RC_X_trg < 0)
+				if (TA531SysEnv.TA531_env_LightA1 <	LightSensr_Gate/3)
 				{
-					TA531_RC1.TA531_RC_X_trg = 0;
-				}
-
-				TA531_RC1_fg = 2;
-
-			}
-			else if (HAL_GPIO_ReadPin(GPIOB,SW_LEFT_Pin) == 0)
-			{
-				OLED_ShowString(OLED_I2C_ch ,OLED_type,10, 1, "Go Y-");
-
-				TA531_RC1.TA531_RC_Y_trg = TA531_RC1.TA531_RC_Y_act -20;
-
-				if(TA531_RC1.TA531_RC_Y_trg < 0)
+					TA531SysEnv.TA531_env_LightD1 = 3;
+				}else
 				{
-					TA531_RC1.TA531_RC_Y_trg = 0;
+					TA531SysEnv.TA531_env_LightD1 = 2;
 				}
-
-				TA531_RC1_fg = 2;
-
-			}
-			else if (HAL_GPIO_ReadPin(GPIOF,SW_RIGHT_Pin) == 0)
+			}else
 			{
-				OLED_ShowString(OLED_I2C_ch ,OLED_type,10, 1, "Go Y+");
-
-				TA531_RC1.TA531_RC_Y_trg = TA531_RC1.TA531_RC_Y_act +50;
-
-				TA531_RC1_fg = 2;
-
+				TA531SysEnv.TA531_env_LightD1 = 1;
 			}
-			else if (HAL_GPIO_ReadPin(GPIOF,SW_BUTTON_Pin) == 0)
+		}else
+		{
+			TA531SysEnv.TA531_env_LightD1 = 0;
+		}
+
+		if (TA531SysEnv.TA531_env_LightA2 <	LightSensr_Gate)
+		{
+			if (TA531SysEnv.TA531_env_LightA2 <	LightSensr_Gate/2)
 			{
-				OLED_ShowString(OLED_I2C_ch ,OLED_type,10, 1, "Push!");
-
-				TA531_RC1.TA531_RC_Z_code = 1;
-				TA531_RC1.TA531_RC_Z_code2 = 0;
-
-				TA531_RC1_fg = 2;
-
+				if (TA531SysEnv.TA531_env_LightA2 <	LightSensr_Gate/3)
+				{
+					TA531SysEnv.TA531_env_LightD2 = 3;
+				}else
+				{
+					TA531SysEnv.TA531_env_LightD2 = 2;
+				}
+			}else
+			{
+				TA531SysEnv.TA531_env_LightD2 = 1;
 			}
+		}else
+		{
+			TA531SysEnv.TA531_env_LightD2 = 0;
+		}
+
+		if (TA531SysEnv.TA531_env_LightA3 <	LightSensr_Gate)
+		{
+			if (TA531SysEnv.TA531_env_LightA3 <	LightSensr_Gate/2)
+			{
+				if (TA531SysEnv.TA531_env_LightA3 <	LightSensr_Gate/3)
+				{
+					TA531SysEnv.TA531_env_LightD3 = 3;
+				}else
+				{
+					TA531SysEnv.TA531_env_LightD3 = 2;
+				}
+			}else
+			{
+				TA531SysEnv.TA531_env_LightD3 = 1;
+			}
+		}else
+		{
+			TA531SysEnv.TA531_env_LightD3 = 0;
+		}
+
+		if (TA531SysEnv.TA531_env_LightA4 <	LightSensr_Gate)
+		{
+			if (TA531SysEnv.TA531_env_LightA4 <	LightSensr_Gate/2)
+			{
+				if (TA531SysEnv.TA531_env_LightA4 <	LightSensr_Gate/3)
+				{
+					TA531SysEnv.TA531_env_LightD4 = 3;
+				}else
+				{
+					TA531SysEnv.TA531_env_LightD4 = 2;
+				}
+			}else
+			{
+				TA531SysEnv.TA531_env_LightD4 = 1;
+			}
+		}else
+		{
+			TA531SysEnv.TA531_env_LightD4 = 0;
+		}
+
+//	TSA1_ADC_DATA[8], TSA2_LS_DATA[8]
+
+		TSA2_LS_DATA[0] = (TA531SysEnv.TA531_env_LightD1& 0x03 ) + ((TA531SysEnv.TA531_env_LightD2 & 0x03 ) << 2 ) + ((TA531SysEnv.TA531_env_LightD3 & 0x03 ) << 4 ) + ((TA531SysEnv.TA531_env_LightD4 & 0x03 ) << 6 );
+		TSA2_LS_DATA[2] = TA531SysEnv.TA531_env_LightA1 & 0xff;
+		TSA2_LS_DATA[3] = TA531SysEnv.TA531_env_LightA2 & 0xff;
+		TSA2_LS_DATA[4] = TA531SysEnv.TA531_env_LightA3 & 0xff;
+		TSA2_LS_DATA[5] = TA531SysEnv.TA531_env_LightA4 & 0xff;
+
+//		HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TSA2_LS_Header, TSA2_LS_DATA);
+
+
+//////////ADC
+		TA531SysEnv.TA531_env_ADC1 = adc_buffer[4]  *0.056;
+		TA531SysEnv.TA531_env_ADC2 = adc_buffer[5]  *0.056;	//*32.50 / 4096 /1.65 *11.65;
+
+		TSA1_ADC_DATA[0] = TA531SysEnv.TA531_env_ADC1 & 0xff;
+		TSA1_ADC_DATA[1] = TA531SysEnv.TA531_env_ADC2 & 0xff;
+
+	//	HAL_Delay(20);
+
+		if(id1 == 0)	//id1 = 0, no RC
+		{
+//		    // ===== 添加第0行：CAN/LIN调试信息 =====
+//		    OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 0, "C:");
+//		    itoa(DEBUG_CAN_Up, str1, 10);
+//		    OLED_ShowString(OLED_I2C_ch, OLED_type, 2, 0, str1);
+//		    OLED_ShowString(OLED_I2C_ch, OLED_type, 3, 0, "/");
+//		    itoa(DEBUG_CAN_Down, str1, 10);
+//		    OLED_ShowString(OLED_I2C_ch, OLED_type, 4, 0, str1);
+//
+//		    OLED_ShowString(OLED_I2C_ch, OLED_type, 6, 0, "L:");
+//		    sprintf(str1, "%02X", DEBUG_LIN_Byte1);
+//		    OLED_ShowString(OLED_I2C_ch, OLED_type, 8, 0, str1);
+//
+//		    OLED_ShowString(OLED_I2C_ch, OLED_type, 11, 0, "S:");
+//		    sprintf(str1, "%02X", DEBUG_LIN_Checksum);
+//		    OLED_ShowString(OLED_I2C_ch, OLED_type, 13, 0, str1);
+//		    // ========================================
+//
+//
+//		    OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 1, "RX:");
+//		    itoa(DEBUG_UART_RX_Count, str1, 10);
+//		    OLED_ShowString(OLED_I2C_ch, OLED_type, 3, 1, str1);
+//
+//		    OLED_ShowString(OLED_I2C_ch, OLED_type, 6, 1, "ID:");
+//		    sprintf(str1, "%02X", DEBUG_ReceiveID);
+//		    OLED_ShowString(OLED_I2C_ch, OLED_type, 9, 1, str1);
+//
+//		    OLED_ShowString(OLED_I2C_ch, OLED_type, 12, 1, "TX:");
+//		    itoa(DEBUG_LIN_Send_Count, str1, 10);
+//		    OLED_ShowString(OLED_I2C_ch, OLED_type, 15, 1, str1);
+//
+//		    OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 2, "PID:");
+//		    sprintf(str1, "%02X", u1RxData[0]);
+//		    OLED_ShowString(OLED_I2C_ch, OLED_type, 4, 2, str1);
+//
+//		    OLED_ShowString(OLED_I2C_ch, OLED_type, 8, 2, "St:");
+//		    itoa(DEBUG_DataProcess, str1, 10);
+//		    OLED_ShowString(OLED_I2C_ch, OLED_type, 11, 2, str1);
+
+
+			itoa(TA531SysEnv.TA531_env_LightA1,str1,10);
+			OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, str1);
+			itoa(TA531SysEnv.TA531_env_LightA2,str1,10);
+			OLED_ShowString(OLED_I2C_ch ,OLED_type,4, 1, str1);
+			itoa(TA531SysEnv.TA531_env_LightA3,str1,10);
+			OLED_ShowString(OLED_I2C_ch ,OLED_type,8, 1, str1);
+			itoa(TA531SysEnv.TA531_env_LightA4,str1,10);
+			OLED_ShowString(OLED_I2C_ch ,OLED_type,12, 1, str1);
+
+			itoa(TA531SysEnv.TA531_env_LightD1,str1,10);
+			OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 2, str1);
+			itoa(TA531SysEnv.TA531_env_LightD2,str1,10);
+			OLED_ShowString(OLED_I2C_ch ,OLED_type,4, 2, str1);
+			itoa(TA531SysEnv.TA531_env_LightD3,str1,10);
+			OLED_ShowString(OLED_I2C_ch ,OLED_type,8, 2, str1);
+			itoa(TA531SysEnv.TA531_env_LightD4,str1,10);
+			OLED_ShowString(OLED_I2C_ch ,OLED_type,12, 2, str1);
+
+			itoa(TA531SysEnv.TA531_env_ADC1,str1,10);
+			OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 3, str1);
+			itoa(TA531SysEnv.TA531_env_ADC2,str1,10);
+			OLED_ShowString(OLED_I2C_ch ,OLED_type,8, 3, str1);
 		}
 
 
 
 
-	    HAL_Delay(5);
-
-
-
-
-
-///////test flash
-
-//		OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 2, "DeviceID:");
-//		uint16_t FlashID;
-//		FlashID = SPI_Flash_GetID();
-//		itoa(FlashID,str1,16);
-//		OLED_ShowString(OLED_I2C_ch ,OLED_type,10, 2, str1);
-
-//		HAL_Delay(500);
-
-////////test end
-
-
-//		SPI_Flash_WriteSomeBytes(&Sys_CNT, Sys_CNT_Addr, sizeof(Sys_CNT));
-//		SPI_Flash_WriteSomeBytes(&Sys_RunCNT, Sys_RunCNT_Addr, sizeof(Sys_RunCNT));
-//
-//		uint8_t str_CNT[32] = {0};
-//		uint8_t str_RunCNT[32] = {0};
-//		SPI_Flash_ReadBytes(str_CNT, Sys_CNT_Addr, sizeof(Sys_CNT));
-//		SPI_Flash_ReadBytes(str_RunCNT, Sys_RunCNT_Addr, sizeof(Sys_RunCNT));
-//
-//		char strCNT;
-//		itoa(Sys_CNT, &strCNT,10);
-//		OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 0, "Sys_CNT: ");
-//		OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, &strCNT);
-//
-//		char strRunCNT;
-//		itoa(Sys_RunCNT, &strRunCNT,10);
-//		OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 2, "Sys_RunCNT: ");
-//		OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 3, &strRunCNT);
-
-
-//		for (int i = 0; i < CANMsg_MNumb ; i++)
-//		{
-//
-//			if(Ser2CAN_Msg[i].DataType == 0x01)	// CAN
-//			{
-//				CAN_TxHeader[i].Identifier = Ser2CAN_Msg[i].DataID;
-//
-//				CAN_TxHeader[i].FDFormat = FDCAN_CLASSIC_CAN;
-//				CAN_TxHeader[i].BitRateSwitch = FDCAN_BRS_OFF;
-//
-//				CAN_TxHeader[i].DataLength = Ser2CAN_Msg[i].DataValueLength;
-//			}
-//			else if(Ser2CAN_Msg[i].DataType == 0x02)	// CAN FD
-//			{
-//				FDCAN_TxHeader[i].Identifier = Ser2CAN_Msg[i].DataID;
-//
-//				FDCAN_TxHeader[i].FDFormat = FDCAN_FD_CAN;
-//				FDCAN_TxHeader[i].BitRateSwitch = FDCAN_BRS_ON;
-//
-//				FDCAN_TxHeader[i].DataLength = Ser2CAN_Msg[i].DataValueLength;
-//			}
-//
-//		}
-
-//		if (Sys_TIM_Flag == 1)
-//		{
-//
-//			for (int i = 0; i < CANMsg_MNumb ; i++)
-//			{
-//
-//				if ( (Sys_TIM_TICK > 0) & ((Sys_TIM_TICK % Ser2CAN_Msg[i].DataCycle) == 0 ) & (Ser2CAN_Msg[i].DataID > 0) & (Ser2CAN_Msg[i].TriggerType >0 )  )
-//				{
-//					if(Ser2CAN_Msg[i].DataChannel == 1)
-//					{
-//						HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &CAN_TxHeader[i], Ser2CAN_Msg[i].DataValue );
-//					}
-//					else if(Ser2CAN_Msg[i].DataChannel == 2)
-//					{
-//						HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan2, &FDCAN_TxHeader[i], Ser2CAN_Msg[i].FDDataValue );
-//					}
-//
-//					char str1[3] = {0};
-//					itoa(Ser2CAN_Msg[i].DataID ,str1,16);
-//					OLED_ShowString(OLED_I2C_ch ,OLED_type,12, 2, str1 );
-//
-//
-//					if((Ser2CAN_Msg[i].TriggerType < 0x3F) & (Ser2CAN_Msg[i].TriggerType > 0))
-//					{
-//						Ser2CAN_Msg[i].TriggerType --;
-//					}
-//				}
-//			}
-//			Sys_TIM_Flag = 0;
-//
-//		}
-
-
-
-//		if ( (SerLoCtrl_Msg.LocalRelay[0] != 3) & (SerLoCtrl_Msg.LocalRelay[1] != 3) & (SerLoCtrl_Msg.LocalRelay[2] != 3) & (SerLoCtrl_Msg.LocalRelay[3] != 3) )
-//		{
-//			if(SerLoCtrl_Msg.LocalRelay[0] == 1)
-//			{
-//				HAL_GPIO_WritePin(GPIOE, KL15_RELAY_Pin, 1);	//F
-//
+		if (TSA3_0x52_Flag == 1)
+		{
+			if(TA531SysEnv.TA531_env_KL15 == 1)
+			{
+				HAL_GPIO_WritePin(KL15_RELAY_GPIO_Port, KL15_RELAY_Pin, 1);	//F
 //				char *str = "*KL15 Relay ON";
 //				OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 2, str );
-//			}
-//			else if(SerLoCtrl_Msg.LocalRelay[0] == 2)
-//			{
-//				HAL_GPIO_WritePin(GPIOE, KL15_SW_Pin, 0);
-//
-//				char *str = "*KL15 Relay OFF";
-//				OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 2, str );
-//			}
-//
-//			if(SerLoCtrl_Msg.LocalRelay[1] == 1)
-//			{
-//				HAL_GPIO_WritePin(GPIOD, OUT_1_Pin, 1);
-//			}
-//			else if(SerLoCtrl_Msg.LocalRelay[1] == 2)
-//			{
-//				HAL_GPIO_WritePin(GPIOD, OUT_1_Pin, 0);
-//			}
-//
-//			if(SerLoCtrl_Msg.LocalRelay[2] == 1)
-//			{
-//				HAL_GPIO_WritePin(GPIOD, OUT_2_Pin, 1);
-//			}
-//			else if(SerLoCtrl_Msg.LocalRelay[2] == 2)
-//			{
-//				HAL_GPIO_WritePin(GPIOD, OUT_2_Pin, 0);
-//			}
-//
-//			if(SerLoCtrl_Msg.LocalRelay[3] == 1)
-//			{
-//				HAL_GPIO_WritePin(GPIOD, OUT_3_Pin, 1);
-//			}
-//			else if(SerLoCtrl_Msg.LocalRelay[3] == 2)
-//			{
-//				HAL_GPIO_WritePin(GPIOD, OUT_3_Pin, 0);
-//			}
-//		}
+			}
+			else if(TA531SysEnv.TA531_env_KL15 == 0)
+			{
+				HAL_GPIO_WritePin(KL15_RELAY_GPIO_Port, KL15_RELAY_Pin, 0);
+			}
 
-//		if ( (SerLoCtrl_Msg.LocalRelay[4] != 3) & (SerLoCtrl_Msg.LocalRelay[5] != 3) & (SerLoCtrl_Msg.LocalRelay[6] != 3) & (SerLoCtrl_Msg.LocalRelay[7] != 3) )
+
+			if(TA531SysEnv.TA531_env_USB1 == 0)
+			{
+				HAL_GPIO_WritePin(USB_RELAY_1_GPIO_Port, USB_RELAY_1_Pin, 0);	//F
+			}
+			else if(TA531SysEnv.TA531_env_USB1 == 1)
+			{
+				HAL_GPIO_WritePin(USB_RELAY_1_GPIO_Port, USB_RELAY_1_Pin, 1);
+				HAL_GPIO_WritePin(USB_RELAY_2_GPIO_Port, USB_RELAY_2_Pin, 0);
+			}
+			else if(TA531SysEnv.TA531_env_USB1 == 2)
+			{
+				HAL_GPIO_WritePin(USB_RELAY_1_GPIO_Port, USB_RELAY_1_Pin, 1);
+				HAL_GPIO_WritePin(USB_RELAY_2_GPIO_Port, USB_RELAY_2_Pin, 1);
+			}
+
+
+
+			// 1			//		TA531SysEnv.TA531_env_KeyLock = (buf_rec[2]>>0)&0x03;
+			if ((TA531SysEnv.TA531_env_KeyLock == 0)&( TA531TimCallback.TA531_Callback_flag[1] == 0 ))
+			{
+				HAL_GPIO_WritePin(COM_RELAY_1_GPIO_Port, COM_RELAY_1_Pin, 0);	//F
+			}
+			else if(TA531SysEnv.TA531_env_KeyLock == 3)
+			{
+				HAL_GPIO_WritePin(COM_RELAY_1_GPIO_Port, COM_RELAY_1_Pin, 1);
+			}
+			else if(TA531SysEnv.TA531_env_KeyLock == 1)	//1s
+			{
+//				uint8_t TA531_Callback_flag[8] ;
+//				uint8_t TA531_Callback_key[8] ;
+//				uint32_t TA531_Callback_tim[8] ;
+
+				HAL_GPIO_WritePin(COM_RELAY_1_GPIO_Port, COM_RELAY_1_Pin, 1);
+//				//TA531TimCallback
+				TA531TimCallback.TA531_Callback_flag[1] = 1 ;
+				TA531TimCallback.TA531_Callback_tim[1] = Sys_TIM_TICK + 1500;
+			}
+			else if(TA531SysEnv.TA531_env_KeyLock == 2)	//6s
+			{
+				HAL_GPIO_WritePin(COM_RELAY_1_GPIO_Port, COM_RELAY_1_Pin, 1);
+//				//TA531TimCallback
+				TA531TimCallback.TA531_Callback_flag[1] = 1 ;
+				TA531TimCallback.TA531_Callback_tim[1] = Sys_TIM_TICK + 6000;
+			}
+
+			// 2			//		TA531SysEnv.TA531_env_KeyUnlock = (buf_rec[2]>>2)&0x03;
+			if ((TA531SysEnv.TA531_env_KeyUnlock == 0)&( TA531TimCallback.TA531_Callback_flag[2] == 0 ))
+			{
+				HAL_GPIO_WritePin(COM_RELAY_2_GPIO_Port, COM_RELAY_2_Pin, 0);	//F
+			}
+			else if(TA531SysEnv.TA531_env_KeyUnlock == 3)
+			{
+				HAL_GPIO_WritePin(COM_RELAY_2_GPIO_Port, COM_RELAY_2_Pin, 1);
+			}
+			else if(TA531SysEnv.TA531_env_KeyUnlock == 1)	//1s
+			{
+				HAL_GPIO_WritePin(COM_RELAY_2_GPIO_Port, COM_RELAY_2_Pin, 1);
+//				//TA531TimCallback
+				TA531TimCallback.TA531_Callback_flag[2] = 1 ;
+				TA531TimCallback.TA531_Callback_tim[2] = Sys_TIM_TICK + 1500;
+			}
+			else if(TA531SysEnv.TA531_env_KeyLock == 2)	//6s
+			{
+				HAL_GPIO_WritePin(COM_RELAY_2_GPIO_Port, COM_RELAY_2_Pin, 1);
+//				//TA531TimCallback
+
+				TA531TimCallback.TA531_Callback_flag[2] = 1 ;
+				TA531TimCallback.TA531_Callback_tim[2] = Sys_TIM_TICK + 6000;
+			}
+
+			// 3		//		TA531SysEnv.TA531_env_KeyRearDoor = (buf_rec[2]>>4)&0x03;
+			if ((TA531SysEnv.TA531_env_KeyRearDoor == 0)&( TA531TimCallback.TA531_Callback_flag[3] == 0 ))
+			{
+				HAL_GPIO_WritePin(COM_RELAY_3_GPIO_Port, COM_RELAY_3_Pin, 0);	//F
+			}
+			else if(TA531SysEnv.TA531_env_KeyRearDoor == 3)
+			{
+				HAL_GPIO_WritePin(COM_RELAY_3_GPIO_Port, COM_RELAY_3_Pin, 1);
+			}
+			else if(TA531SysEnv.TA531_env_KeyRearDoor == 1)	//1s
+			{
+				HAL_GPIO_WritePin(COM_RELAY_3_GPIO_Port, COM_RELAY_3_Pin, 1);
+//				//TA531TimCallback
+
+				TA531TimCallback.TA531_Callback_flag[3] = 1 ;
+				TA531TimCallback.TA531_Callback_tim[3] = Sys_TIM_TICK + 1500;
+
+			}
+			else if(TA531SysEnv.TA531_env_KeyLock == 2)	//6s
+			{
+				HAL_GPIO_WritePin(COM_RELAY_3_GPIO_Port, COM_RELAY_3_Pin, 1);
+//				//TA531TimCallback
+
+				TA531TimCallback.TA531_Callback_flag[3] = 1 ;
+				TA531TimCallback.TA531_Callback_tim[3] = Sys_TIM_TICK + 6000;
+			}
+
+			// 4		//		TA531SysEnv.TA531_env_KeyBeep = (buf_rec[2]>>6)&0x03;
+
+			// 5		//		TA531SysEnv.TA531_env_KeyWindow = (buf_rec[3]>>0)&0x03;
+
+			// 6		//		TA531SysEnv.TA531_env_KeyLeftDoor = (buf_rec[3]>>2)&0x03;
+
+			// 7		//		TA531SysEnv.TA531_env_KeyRightDoor = (buf_rec[3]>>4)&0x03;
+
+
+			// ========== HSD1 控制（左上开关）==========
+			if(TA531SysEnv.TA531_env_Relay1 == 0)  // Relay1 = 1 → 关闭
+			{
+				HAL_GPIO_WritePin(DOOR_RELAY_HSD1_GPIO_Port, DOOR_RELAY_HSD1_Pin, 0);
+			}
+			else  // Relay1 = 0 或 2 → 常开
+			{
+				HAL_GPIO_WritePin(DOOR_RELAY_HSD1_GPIO_Port, DOOR_RELAY_HSD1_Pin, 1);
+			}
+
+			// ========== HSD2 控制（右上开关）==========
+			if(TA531SysEnv.TA531_env_Relay2 == 0)  // Relay2 = 1 → 关闭
+			{
+				HAL_GPIO_WritePin(DOOR_RELAY_HSD2_GPIO_Port, DOOR_RELAY_HSD2_Pin, 0);
+			}
+			else  // Relay2 = 0 或 2 → 常开
+			{
+				HAL_GPIO_WritePin(DOOR_RELAY_HSD2_GPIO_Port, DOOR_RELAY_HSD2_Pin, 1);
+			}
+
+			// ========== HSD3 控制（左下开关）==========
+			if(TA531SysEnv.TA531_env_Relay3 == 0)  // Relay3 = 1 → 关闭
+			{
+				HAL_GPIO_WritePin(DOOR_RELAY_HSD3_GPIO_Port, DOOR_RELAY_HSD3_Pin, 0);
+			}
+			else  // Relay3 = 0 或 2 → 常开
+			{
+				HAL_GPIO_WritePin(DOOR_RELAY_HSD3_GPIO_Port, DOOR_RELAY_HSD3_Pin, 1);
+			}
+
+			// ========== HSD4 控制（右下开关）==========
+			if(TA531SysEnv.TA531_env_Relay4 == 0)  // Relay4 = 1 → 关闭
+			{
+				HAL_GPIO_WritePin(DOOR_RELAY_HSD4_GPIO_Port, DOOR_RELAY_HSD4_Pin, 0);
+			}
+			else  // Relay4 = 0 或 2 → 常开
+			{
+				HAL_GPIO_WritePin(DOOR_RELAY_HSD4_GPIO_Port, DOOR_RELAY_HSD4_Pin, 1);
+			}
+
+			// ========================================
+			// 保留Y_RELAY_5和Y_RELAY_6（如果需要）
+			// ========================================
+
+			if(TA531SysEnv.TA531_env_Relay5 == 1)
+			{
+				HAL_GPIO_WritePin(Y_RELAY_5_GPIO_Port, Y_RELAY_5_Pin, 0);
+			}
+			else if(TA531SysEnv.TA531_env_Relay5 == 2)
+			{
+				HAL_GPIO_WritePin(Y_RELAY_5_GPIO_Port, Y_RELAY_5_Pin, 1);
+			}
+
+			if(TA531SysEnv.TA531_env_Relay6 == 1)
+			{
+				HAL_GPIO_WritePin(Y_RELAY_6_GPIO_Port, Y_RELAY_6_Pin, 0);
+			}
+			else if(TA531SysEnv.TA531_env_Relay6 == 2)
+			{
+				HAL_GPIO_WritePin(Y_RELAY_6_GPIO_Port, Y_RELAY_6_Pin, 1);
+			}
+
+			TSA_Ack_DATA[3] = 0xff;
+			TSA3_0x52_Flag = 0;
+		}
+
+		if (TSA4_0x53_Flag == 1)
+		{
+
+			if(TA531SysEnv.TA531_env_WindowFL == 0)	//			B		//无输�?????????????????????????????????????	上升	手动
+			{}
+			else if(TA531SysEnv.TA531_env_WindowFL == 1)	//			B
+			{}
+			else if(TA531SysEnv.TA531_env_WindowFL == 2)
+			{}
+			else if(TA531SysEnv.TA531_env_WindowFL == 3)
+			{}
+			else if(TA531SysEnv.TA531_env_WindowFL == 4)
+			{}
+			if(TA531SysEnv.TA531_env_WindowFR == 0)	//			B
+			{}
+			else if(TA531SysEnv.TA531_env_WindowFR == 1)	//			B
+			{}
+			else if(TA531SysEnv.TA531_env_WindowFR == 2)
+			{}
+			else if(TA531SysEnv.TA531_env_WindowFR == 3)
+			{}
+			else if(TA531SysEnv.TA531_env_WindowFR == 4)
+			{}
+			if(TA531SysEnv.TA531_env_WindowRL == 0)	//			RL DDDD
+			{}
+			else if(TA531SysEnv.TA531_env_WindowRL == 1)	//			RL DDDD
+			{}
+			else if(TA531SysEnv.TA531_env_WindowRL == 2)
+			{}
+			else if(TA531SysEnv.TA531_env_WindowRL == 3)
+			{}
+			else if(TA531SysEnv.TA531_env_WindowRL == 4)
+			{}
+			if(TA531SysEnv.TA531_env_WindowRR == 0)	//			RR DDDD
+			{}
+			else if(TA531SysEnv.TA531_env_WindowRR == 1)	//			RR DDDD
+			{}
+			else if(TA531SysEnv.TA531_env_WindowRR == 2)
+			{}
+			else if(TA531SysEnv.TA531_env_WindowRR == 3)
+			{}
+			else if(TA531SysEnv.TA531_env_WindowRR == 4)
+			{}
+//			if(TA531SysEnv.TA531_env_HSD12_1 == 0)	//
+//			{
+//				HAL_GPIO_WritePin(DOOR_RELAY_HSD1_GPIO_Port, DOOR_RELAY_HSD1_Pin, 0);
+//			}
+//			else if(TA531SysEnv.TA531_env_HSD12_1 == 1)	//
+//			{
+//				HAL_GPIO_WritePin(DOOR_RELAY_HSD1_GPIO_Port, DOOR_RELAY_HSD1_Pin, 1);
+//			}
+//
+//			if(TA531SysEnv.TA531_env_HSD12_2 == 0)	//
+//			{
+//				HAL_GPIO_WritePin(DOOR_RELAY_HSD2_GPIO_Port, DOOR_RELAY_HSD2_Pin, 0);
+//			}
+//			else if(TA531SysEnv.TA531_env_HSD12_2 == 1)	//
+//			{
+//				HAL_GPIO_WritePin(DOOR_RELAY_HSD2_GPIO_Port, DOOR_RELAY_HSD2_Pin, 1);
+//			}
+//			if(TA531SysEnv.TA531_env_HSD12_3 == 0)	//
+//			{
+//				HAL_GPIO_WritePin(DOOR_RELAY_HSD3_GPIO_Port, DOOR_RELAY_HSD3_Pin, 0);
+//			}
+//			else if(TA531SysEnv.TA531_env_HSD12_3 == 1)	//
+//			{
+//				HAL_GPIO_WritePin(DOOR_RELAY_HSD3_GPIO_Port, DOOR_RELAY_HSD3_Pin, 1);
+//			}
+//			if(TA531SysEnv.TA531_env_HSD12_4 == 0)	//
+//			{
+//				HAL_GPIO_WritePin(DOOR_RELAY_HSD4_GPIO_Port, DOOR_RELAY_HSD4_Pin, 0);
+//			}
+//			else if(TA531SysEnv.TA531_env_HSD12_4 == 1)	//
+//			{
+//				HAL_GPIO_WritePin(DOOR_RELAY_HSD4_GPIO_Port, DOOR_RELAY_HSD4_Pin, 1);
+//			}
+		    TA531_Door.Door_FL = (TA531SysEnv.TA531_env_DoorSwFL & 0x03);    // 左前门
+		    TA531_Door.Door_FR = (TA531SysEnv.TA531_env_DoorSwFR & 0x03);    // 右前门
+		    TA531_Door.Door_RL = (TA531SysEnv.TA531_env_DoorSwRL & 0x03);    // 左后门
+		    TA531_Door.Door_Hood = (TA531SysEnv.TA531_env_DoorSwF & 0x03);   // 前引擎盖 ← 改
+		    TA531_Door.Door_Trunk = (TA531SysEnv.TA531_env_DoorSwR & 0x03);  // 后备箱 ← 改
+		    TA531_Door.Door_Reserve = (TA531SysEnv.TA531_env_DoorSwRR & 0x03);
+
+			TSA4_0x53_Flag = 0;
+			TSA_Ack_DATA[4] = 0xff;
+		}
+
+		if (TSA4_0x54_Flag == 1)
+		{
+			PWMServo2_3_AGout(TA531SysEnv.TA531_env_PWM_Ag_1);
+			PWMServo2_4_AGout(TA531SysEnv.TA531_env_PWM_Ag_2);
+			PWMServo3_1_AGout(TA531SysEnv.TA531_env_PWM_Ag_3);
+			PWMServo3_2_AGout(TA531SysEnv.TA531_env_PWM_Ag_4);
+
+			TSA4_0x54_Flag = 0;
+			TSA_Ack_DATA[4] = 0xff;
+		}
+//		if (TSA4_0x104_Flag == 1)
 //		{
-//			if(SerLoCtrl_Msg.LocalRelay[4] == 1)
-//			{
-//				HAL_GPIO_WritePin(GPIOD, OUT_4_Pin, 1);
-//			}
-//			else if(SerLoCtrl_Msg.LocalRelay[4] == 2)
-//			{
-//				HAL_GPIO_WritePin(GPIOD, OUT_4_Pin, 0);
-//			}
-//
-//			if(SerLoCtrl_Msg.LocalRelay[5] == 1)
-//			{
-//				HAL_GPIO_WritePin(GPIOD, OUT_5_Pin, 1);
-//			}
-//			else if(SerLoCtrl_Msg.LocalRelay[5] == 2)
-//			{
-//				HAL_GPIO_WritePin(GPIOD, OUT_5_Pin, 0);
-//			}
-//
-//			if(SerLoCtrl_Msg.LocalRelay[6] == 1)
-//			{
-//				HAL_GPIO_WritePin(GPIOD, OUT_6_Pin, 1);
-//			}
-//			else if(SerLoCtrl_Msg.LocalRelay[6] == 2)
-//			{
-//				HAL_GPIO_WritePin(GPIOD, OUT_6_Pin, 0);
-//			}
-//
-//			if(SerLoCtrl_Msg.LocalRelay[7] == 1)
-//			{
-//				HAL_GPIO_WritePin(GPIOD, OUT_7_Pin, 1);
-//			}
-//			else if(SerLoCtrl_Msg.LocalRelay[7] == 2)
-//			{
-//				HAL_GPIO_WritePin(GPIOD, OUT_7_Pin, 0);
-//			}
+//		    Lin_DataProcess_loop();  // ← 添加这行
+//		    TSA4_0x104_Flag = 0;
+//		    TSA_Ack_DATA[5] = 0xff;
 //		}
 
 
+	//		uint8_t TA531_Callback_flag[8] ;
+	//		uint8_t TA531_Callback_key[8] ;
+	//		uint32_t TA531_Callback_tim[8] ;
+		for (int i = 1;i<8 ;i++)		//release key
+		{
+			if (TA531TimCallback.TA531_Callback_flag[i] == 1)
+			{
+				if (TA531TimCallback.TA531_Callback_tim[i] < Sys_TIM_TICK)
+				{
+					switch(i)
+					{
+					case 1:		//
+						HAL_GPIO_WritePin(COM_RELAY_1_GPIO_Port, COM_RELAY_1_Pin, 0);
+						break;
+					case 2:		//
+						HAL_GPIO_WritePin(COM_RELAY_2_GPIO_Port, COM_RELAY_2_Pin, 0);
+						break;
+					case 3:		//
+						HAL_GPIO_WritePin(COM_RELAY_3_GPIO_Port, COM_RELAY_3_Pin, 0);
+						break;
+//					case 4:		//
+//						HAL_GPIO_WritePin(GPIOE, COM_RELAY_4_Pin, 0);
+//						break;
+//					case 5:		//
+//						HAL_GPIO_WritePin(GPIOE, COM_RELAY_5_Pin, 0);
+//						break;
+//					case 6:		//
+//						HAL_GPIO_WritePin(GPIOB, COM_RELAY_6_Pin, 0);
+//						break;
+//					case 7:		//
+//						HAL_GPIO_WritePin(GPIOB, COM_RELAY_7_Pin, 0);
+//						break;
+					}
 
+					TA531TimCallback.TA531_Callback_flag[i] = 0;
+				}
+			}
+		}
+
+
+//////TEST LIN
+//		TSA4_0x103_Flag = 1;
+//		TA531_LIN_SWS.LIN_SWS_SWSCnfmSwA_1 = 	SW_BUTTON;
+//		TA531_LIN_SWS.LIN_SWS_SWSSelUpSwA_1 = 	SW_UP;
+//		TA531_LIN_SWS.LIN_SWS_SWSSelDwnSwA_1 = 	SW_DW;
+//		TA531_LIN_SWS.LIN_SWS_SWSSelLSwA_1 = 	SW_LEFT;
+//		TA531_LIN_SWS.LIN_SWS_SWSSelRSwA_1 = 	SW_RIGHT;
+
+//		TSA4_0x104_Flag = 1;
+//		if(SW_BUTTON)
+//		{
+//			Remote_state = 1;
+//		}
+//		TA531_LIN_SWS_G3.SWSCnfmSwReq_l = 	SW_BUTTON;
+//		TA531_LIN_SWS_G3.SWSSelUpSwReq_l = 	SW_UP;
+//		TA531_LIN_SWS_G3.SWSSelDwnSwReq_l = 	SW_DW;
+//		TA531_LIN_SWS_G3.SWSSelLSwReq_l = 	SW_LEFT;
+//		TA531_LIN_SWS_G3.SWSSelRSwReq_l = 	SW_RIGHT;
+
+
+
+		if(temper_flag == 0)
+		{
+			SPI_Stop(Flash_SPI);
+			HAL_Delay(5);
+			SPI_TFT_Start(Flash_SPI);
+			HAL_Delay(5);
+
+			itoa(temp1075_ZXD_i,str1,10);
+			strcat(str1, ".");
+			itoa(temp1075_ZXD_f,str2,10);
+			strncat(str1, str2,1);
+			lv_label_set_text(guider_ui.screen_label_Temp_ZXD, str1);
+			lv_arc_set_value(guider_ui.screen_arc_TEMP_ZXD, temp1075_ZXD_i);
+
+			itoa(temp1075_ZPD,str1,10);
+			lv_label_set_text(guider_ui.screen_label_Temp_ZPD, str1);
+			lv_arc_set_value(guider_ui.screen_arc_TEMP_ZPD, temp1075_ZPD);
+
+			itoa(temp1075_LHZCU,str1,10);
+			lv_label_set_text(guider_ui.screen_label_Temp_LHZCU, str1);
+			lv_arc_set_value(guider_ui.screen_arc_TEMP_LHZCU, temp1075_LHZCU);
+
+			itoa(temp1075_RHZCU,str1,10);
+			lv_label_set_text(guider_ui.screen_label_Temp_RHZCU, str1);
+			lv_arc_set_value(guider_ui.screen_arc_TEMP_RHZCU, temp1075_RHZCU);
+
+			itoa(temp1075_RZCU,str1,10);
+			lv_label_set_text(guider_ui.screen_label_Temp_RZCU, str1);
+			lv_arc_set_value(guider_ui.screen_arc_TEMP_RZCU, temp1075_RZCU);
+
+
+
+//			lvLED_Sts_TPRobot, lvLED_Sts_LIN, lvLED_Sts_CAN, lvLED_Sts_Sensor;
+//			// 0 	GUI_GRAY,	1	GUI_GREEN,	2	GUI_ORANGE,	3	GUI_RED
+//
+//			lv_led_set_color(guider_ui.screen_led_TP, lv_color_hex(GUI_GRAY));
+//			lv_led_set_color(guider_ui.screen_led_LIN, lv_color_hex(GUI_GREEN));
+//			lv_led_set_color(guider_ui.screen_led_CAN, lv_color_hex(GUI_ORANGE));
+//			lv_led_set_color(guider_ui.screen_led_Sensor, lv_color_hex(GUI_RED));
+
+
+			switch(lvLED_Sts_TPRobot)
+			{
+			case 0:		//
+				lv_led_set_color(guider_ui.screen_led_TP, lv_color_hex(GUI_GRAY));
+				break;
+			case 1:		//
+				lv_led_set_color(guider_ui.screen_led_TP, lv_color_hex(GUI_GREEN));
+				break;
+			case 2:		//
+				lv_led_set_color(guider_ui.screen_led_TP, lv_color_hex(GUI_ORANGE));
+				break;
+			case 3:		//
+				lv_led_set_color(guider_ui.screen_led_TP, lv_color_hex(GUI_RED));
+				break;
+			}
+
+			switch(lvLED_Sts_LIN)
+			{
+			case 0:		//
+				lv_led_set_color(guider_ui.screen_led_LIN, lv_color_hex(GUI_GRAY));
+				break;
+			case 1:		//
+				lv_led_set_color(guider_ui.screen_led_LIN, lv_color_hex(GUI_GREEN));
+				break;
+			case 2:		//
+				lv_led_set_color(guider_ui.screen_led_LIN, lv_color_hex(GUI_ORANGE));
+				break;
+			case 3:		//
+				lv_led_set_color(guider_ui.screen_led_LIN, lv_color_hex(GUI_RED));
+				break;
+			}
+
+			switch(lvLED_Sts_CAN)
+			{
+			case 0:		//
+				lv_led_set_color(guider_ui.screen_led_CAN, lv_color_hex(GUI_GRAY));
+				break;
+			case 1:		//
+				lv_led_set_color(guider_ui.screen_led_CAN, lv_color_hex(GUI_GREEN));
+				break;
+			case 2:		//
+				lv_led_set_color(guider_ui.screen_led_CAN, lv_color_hex(GUI_ORANGE));
+				break;
+			case 3:		//
+				lv_led_set_color(guider_ui.screen_led_CAN, lv_color_hex(GUI_RED));
+				break;
+			}
+
+			switch(lvLED_Sts_Sensor)
+			{
+			case 0:		//
+				lv_led_set_color(guider_ui.screen_led_Sensor, lv_color_hex(GUI_GRAY));
+				break;
+			case 1:		//
+				lv_led_set_color(guider_ui.screen_led_Sensor, lv_color_hex(GUI_GREEN));
+				break;
+			case 2:		//
+				lv_led_set_color(guider_ui.screen_led_Sensor, lv_color_hex(GUI_ORANGE));
+				break;
+			case 3:		//
+				lv_led_set_color(guider_ui.screen_led_Sensor, lv_color_hex(GUI_RED));
+				break;
+			}
+
+
+
+			lv_task_handler();
+			HAL_Delay(1);
+//			SPI_Stop(Flash_SPI);
+//			HAL_Delay(5);
+
+
+		}
+		else	//(temper_flag == 1)
+		{
+		//float temp1075_ZXD , temp1075_IPD , temp1075_LHZCU , temp1075_RHZCU , temp1075_RZCU , temp1075_Bk1 , temp1075_Bk2 , temp1075_Bk3;
+			temp1075_ZXD = readTemperature(temp1075_ch , TempSensor_ADDR_ZXD) ;
+			temp1075_ZPD = readTemperature(temp1075_ch , TempSensor_ADDR_ZPD) ;
+			temp1075_LHZCU = readTemperature(temp1075_ch , TempSensor_ADDR_LHZCU) ;
+			temp1075_RHZCU = readTemperature(temp1075_ch , TempSensor_ADDR_RHZCU) ;
+			temp1075_RZCU = readTemperature(temp1075_ch , TempSensor_ADDR_RZCU) ;
+
+			if(temp1075_ZXD < 10)
+			{
+				lvLED_Sts_Sensor = 0;
+			}
+			else if((temp1075_ZXD < 50)&(temp1075_ZPD < 50) )
+			{
+				lvLED_Sts_Sensor = 1;
+			}
+			else if((temp1075_ZXD < 75)&(temp1075_ZPD < 75) )
+			{
+				lvLED_Sts_Sensor = 2;
+			}
+			else
+			{
+				lvLED_Sts_Sensor = 3;
+			}
+
+			temp1075_ZXD_i = truncf(temp1075_ZXD);
+			temp1075_ZXD_f = (temp1075_ZXD - temp1075_ZXD_i)*100;
+
+//			itoa(temp1075_ZXD_i,str1,10);
+//			OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 2, str1);
+//			OLED_ShowString(OLED_I2C_ch ,OLED_type,2, 2, ".");
+//			itoa(temp1075_ZXD_f,str1,10);
+//			OLED_ShowString(OLED_I2C_ch ,OLED_type,3, 2, str1);
+
+
+			temper_flag = 0;
+		}
+	    if(id1 == 1)  // MoC模式下显示
+	    {
+	        // 第0行：CAN, LIN, 校验和
+	        OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 0, "C:");
+	        itoa(DEBUG_CAN_Up, str1, 10);
+	        OLED_ShowString(OLED_I2C_ch, OLED_type, 2, 0, str1);
+	        OLED_ShowString(OLED_I2C_ch, OLED_type, 3, 0, "/");
+	        itoa(DEBUG_CAN_Down, str1, 10);
+	        OLED_ShowString(OLED_I2C_ch, OLED_type, 4, 0, str1);
+
+	        OLED_ShowString(OLED_I2C_ch, OLED_type, 6, 0, "L:");
+	        sprintf(str1, "%02X", DEBUG_LIN_Byte1);
+	        OLED_ShowString(OLED_I2C_ch, OLED_type, 8, 0, str1);
+
+	        // ===== 新增：显示校验和 =====
+	        OLED_ShowString(OLED_I2C_ch, OLED_type, 11, 0, "S:");
+	        sprintf(str1, "%02X", DEBUG_LIN_Checksum);
+	        OLED_ShowString(OLED_I2C_ch, OLED_type, 13, 0, str1);
+	        // ===========================
+
+
+	        // 第1行：光敏传感器值（4个）
+	        OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 1, "L:");
+	        itoa(TA531SysEnv.TA531_env_LightA1, str1, 10);
+	        OLED_ShowString(OLED_I2C_ch, OLED_type, 2, 1, str1);
+	        OLED_ShowString(OLED_I2C_ch, OLED_type, 5, 1, " ");
+
+	        itoa(TA531SysEnv.TA531_env_LightA2, str1, 10);
+	        OLED_ShowString(OLED_I2C_ch, OLED_type, 6, 1, str1);
+	        OLED_ShowString(OLED_I2C_ch, OLED_type, 9, 1, " ");
+
+	        itoa(TA531SysEnv.TA531_env_LightA3, str1, 10);
+	        OLED_ShowString(OLED_I2C_ch, OLED_type, 10, 1, str1);
+	        OLED_ShowString(OLED_I2C_ch, OLED_type, 13, 1, " ");
+
+	        itoa(TA531SysEnv.TA531_env_LightA4, str1, 10);
+	        OLED_ShowString(OLED_I2C_ch, OLED_type, 14, 1, str1);
+
+	        // 第2行：X坐标（实际位置）
+	        OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 2, "X:");
+	        itoa(TA531_RC1.TA531_RC_X_act, str1, 10);
+	        OLED_ShowString(OLED_I2C_ch, OLED_type, 2, 2, str1);
+	        OLED_ShowString(OLED_I2C_ch, OLED_type, 6, 2, "     ");  // 清空多余字符
+
+	        // 第3行：Y坐标（实际位置）
+	        OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 3, "Y:");
+	        itoa(TA531_RC1.TA531_RC_Y_act, str1, 10);
+	        OLED_ShowString(OLED_I2C_ch, OLED_type, 2, 3, str1);
+	        OLED_ShowString(OLED_I2C_ch, OLED_type, 6, 3, "     ");  // 清空多余字符
+	    }
+	    // =======================================
 	}  //while
 
     /* USER CODE END WHILE */
@@ -1454,7 +2100,7 @@ static void MX_ADC1_Init(void)
 
   /** Configure Regular Channel
   */
-  sConfig.Channel = ADC_CHANNEL_7;
+  sConfig.Channel = ADC_CHANNEL_4;
   sConfig.Rank = ADC_REGULAR_RANK_3;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
@@ -1463,7 +2109,7 @@ static void MX_ADC1_Init(void)
 
   /** Configure Regular Channel
   */
-  sConfig.Channel = ADC_CHANNEL_8;
+  sConfig.Channel = ADC_CHANNEL_7;
   sConfig.Rank = ADC_REGULAR_RANK_4;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
@@ -1472,7 +2118,7 @@ static void MX_ADC1_Init(void)
 
   /** Configure Regular Channel
   */
-  sConfig.Channel = ADC_CHANNEL_10;
+  sConfig.Channel = ADC_CHANNEL_8;
   sConfig.Rank = ADC_REGULAR_RANK_5;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
@@ -1481,7 +2127,7 @@ static void MX_ADC1_Init(void)
 
   /** Configure Regular Channel
   */
-  sConfig.Channel = ADC_CHANNEL_11;
+  sConfig.Channel = ADC_CHANNEL_10;
   sConfig.Rank = ADC_REGULAR_RANK_6;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
@@ -1573,14 +2219,22 @@ static void MX_FDCAN1_Init(void)
 	  FDCAN_Filter1[i].FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
 
 	  FDCAN_Filter1[i].FilterType = FDCAN_FILTER_RANGE;
-	  FDCAN_Filter1[i].FilterID1 = 0x0000;
-	  FDCAN_Filter1[i].FilterID2 = 0x0000;
+	  FDCAN_Filter1[i].FilterID1 = 0x000;
+	  FDCAN_Filter1[i].FilterID2 = 0x7FF;
   }
 
   //24,25,26,27
-  FDCAN_Filter1[1].FilterID1 = 0x0064;
-  FDCAN_Filter1[1].FilterID2 = 0x0064;
+  FDCAN_Filter1[1].FilterID1 = 0x0050;
+  FDCAN_Filter1[1].FilterID2 = 0x0055;
 
+  FDCAN_Filter1[2].FilterID1 = 0x0060;
+  FDCAN_Filter1[2].FilterID2 = 0x0066;
+
+  FDCAN_Filter1[3].FilterID1 = 0x00100;
+  FDCAN_Filter1[3].FilterID2 = 0x00105;
+
+  FDCAN_Filter1[4].FilterID1 = 0x00530;
+  FDCAN_Filter1[4].FilterID2 = 0x00532;
 
 
   for(uint8_t i=0;i<28;i++)
@@ -1622,9 +2276,9 @@ static void MX_FDCAN2_Init(void)
   hfdcan2.Init.ClockDivider = FDCAN_CLOCK_DIV1;
   hfdcan2.Init.FrameFormat = FDCAN_FRAME_CLASSIC;
   hfdcan2.Init.Mode = FDCAN_MODE_NORMAL;
-  hfdcan2.Init.AutoRetransmission = DISABLE;
-  hfdcan2.Init.TransmitPause = DISABLE;
-  hfdcan2.Init.ProtocolException = DISABLE;
+  hfdcan2.Init.AutoRetransmission = ENABLE;
+  hfdcan2.Init.TransmitPause = ENABLE;
+  hfdcan2.Init.ProtocolException = ENABLE;
   hfdcan2.Init.NominalPrescaler = 64;
   hfdcan2.Init.NominalSyncJumpWidth = 1;
   hfdcan2.Init.NominalTimeSeg1 = 5;
@@ -1642,37 +2296,34 @@ static void MX_FDCAN2_Init(void)
   }
   /* USER CODE BEGIN FDCAN2_Init 2 */
 
-  for(uint8_t i=0;i<28;i++)
-  {
-	  FDCAN_Filter2[i].IdType = FDCAN_STANDARD_ID;
-	  FDCAN_Filter2[i].FilterIndex = i;
-	  FDCAN_Filter2[i].FilterConfig = FDCAN_FILTER_TO_RXFIFO1;
+  FDCAN_FilterTypeDef sFilterConfig2;
 
-	  FDCAN_Filter2[i].FilterType = FDCAN_FILTER_RANGE;
-	  FDCAN_Filter2[i].FilterID1 = 0x0000;
-	  FDCAN_Filter2[i].FilterID2 = 0x0000;
+  sFilterConfig2.IdType = FDCAN_STANDARD_ID;
+  sFilterConfig2.FilterIndex = 0;
+  sFilterConfig2.FilterType = FDCAN_FILTER_RANGE;
+  sFilterConfig2.FilterConfig = FDCAN_FILTER_TO_RXFIFO1;
+
+  // 接收所有标准帧 (0x000 ~ 0x7FF)
+  sFilterConfig2.FilterID1 = 0x000;
+  sFilterConfig2.FilterID2 = 0x7FF;
+
+  if (HAL_FDCAN_ConfigFilter(&hfdcan2, &sFilterConfig2) != HAL_OK) {
+      Error_Handler();
   }
 
-  FDCAN_Filter2[1].FilterID1 = 0x0001;
-  FDCAN_Filter2[1].FilterID2 = 0x0010;
+  // 全局过滤器：接受所有标准/扩展帧到FIFO1
+  HAL_FDCAN_ConfigGlobalFilter(&hfdcan2,
+      FDCAN_ACCEPT_IN_RX_FIFO1,   // 标准帧 → FIFO1
+      FDCAN_ACCEPT_IN_RX_FIFO1,   // 扩展帧 → FIFO1
+      DISABLE, DISABLE);
 
-  for(uint8_t i=0;i<28;i++)
-  {
-	if (HAL_FDCAN_ConfigFilter(&hfdcan2, &FDCAN_Filter2[i]) != HAL_OK) //滤波器初始化
-	{
-		Error_Handler();
-	}
+  // ✅✅✅ 关键代码：启动FDCAN2 ✅✅✅
+  if (HAL_FDCAN_Start(&hfdcan2) != HAL_OK) {
+      Error_Handler();
   }
 
-	HAL_FDCAN_ConfigGlobalFilter(&hfdcan2, FDCAN_REJECT, FDCAN_REJECT, DISABLE,
-			DISABLE); //FDCAN_ACCEPT_IN_RX_FIFO0
-	if (HAL_FDCAN_Start(&hfdcan2) != HAL_OK)
-	{
-		Error_Handler();
-	}
-	HAL_FDCAN_ActivateNotification(&hfdcan2, FDCAN_IT_RX_FIFO1_NEW_MESSAGE, 0);
-
-	//HAL_UART_Transmit_IT(&huart1, " HAL_FDCAN2_Start! ", strlen(" HAL_FDCAN2_Start! "));
+  // ✅✅✅ 关键代码：激活接收中断 ✅✅✅
+  HAL_FDCAN_ActivateNotification(&hfdcan2, FDCAN_IT_RX_FIFO1_NEW_MESSAGE, 0);
   /* USER CODE END FDCAN2_Init 2 */
 
 }
@@ -1693,7 +2344,7 @@ static void MX_I2C1_Init(void)
 
   /* USER CODE END I2C1_Init 1 */
   hi2c1.Instance = I2C1;
-  hi2c1.Init.Timing = 0x10707DBC;
+  hi2c1.Init.Timing = 0x00C12166;
   hi2c1.Init.OwnAddress1 = 0;
   hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
   hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
@@ -1741,7 +2392,7 @@ static void MX_I2C3_Init(void)
 
   /* USER CODE END I2C3_Init 1 */
   hi2c3.Instance = I2C3;
-  hi2c3.Init.Timing = 0x10707DBC;
+  hi2c3.Init.Timing = 0x00C12166;
   hi2c3.Init.OwnAddress1 = 0;
   hi2c3.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
   hi2c3.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
@@ -1851,11 +2502,25 @@ static void MX_TIM1_Init(void)
     Error_Handler();
   }
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 10;
+  sConfigOC.Pulse = 200;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
   sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
   sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
+  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.Pulse = 0;
+  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_3) != HAL_OK)
+  {
+    Error_Handler();
+  }
   if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_4) != HAL_OK)
   {
     Error_Handler();
@@ -1880,6 +2545,179 @@ static void MX_TIM1_Init(void)
   /* USER CODE BEGIN TIM1_Init 2 */
 
   /* USER CODE END TIM1_Init 2 */
+  HAL_TIM_MspPostInit(&htim1);
+
+}
+
+/**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 63;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 20000;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
+  if (HAL_TIM_PWM_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.Pulse = 1500;
+  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+
+  /* USER CODE END TIM2_Init 2 */
+  HAL_TIM_MspPostInit(&htim2);
+
+}
+
+/**
+  * @brief TIM3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM3_Init(void)
+{
+
+  /* USER CODE BEGIN TIM3_Init 0 */
+
+  /* USER CODE END TIM3_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+
+  /* USER CODE BEGIN TIM3_Init 1 */
+
+  /* USER CODE END TIM3_Init 1 */
+  htim3.Instance = TIM3;
+  htim3.Init.Prescaler = 63;
+  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim3.Init.Period = 20000;
+  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
+  if (HAL_TIM_PWM_Init(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 1500;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM3_Init 2 */
+
+  /* USER CODE END TIM3_Init 2 */
+  HAL_TIM_MspPostInit(&htim3);
+
+}
+
+/**
+  * @brief TIM4 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM4_Init(void)
+{
+
+  /* USER CODE BEGIN TIM4_Init 0 */
+
+  /* USER CODE END TIM4_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+
+  /* USER CODE BEGIN TIM4_Init 1 */
+
+  /* USER CODE END TIM4_Init 1 */
+  htim4.Instance = TIM4;
+  htim4.Init.Prescaler = 0;
+  htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim4.Init.Period = 65535;
+  htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_PWM_Init(&htim4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim4, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_PWM_ConfigChannel(&htim4, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_ConfigChannel(&htim4, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_ConfigChannel(&htim4, &sConfigOC, TIM_CHANNEL_3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_ConfigChannel(&htim4, &sConfigOC, TIM_CHANNEL_4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM4_Init 2 */
+
+  /* USER CODE END TIM4_Init 2 */
+  HAL_TIM_MspPostInit(&htim4);
 
 }
 
@@ -1903,7 +2741,7 @@ static void MX_TIM6_Init(void)
   htim6.Instance = TIM6;
   htim6.Init.Prescaler = 64000-1;
   htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim6.Init.Period = 50-1;
+  htim6.Init.Period = 500-1;
   htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
   if (HAL_TIM_Base_Init(&htim6) != HAL_OK)
   {
@@ -2027,13 +2865,17 @@ static void MX_TIM15_Init(void)
     Error_Handler();
   }
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 200-1;
+  sConfigOC.Pulse = 0;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
   sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
   sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
   if (HAL_TIM_PWM_ConfigChannel(&htim15, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_ConfigChannel(&htim15, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
   {
     Error_Handler();
   }
@@ -2074,7 +2916,7 @@ static void MX_TIM16_Init(void)
   htim16.Instance = TIM16;
   htim16.Init.Prescaler = 64000-1;
   htim16.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim16.Init.Period = 5-1;
+  htim16.Init.Period = 50-1;
   htim16.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim16.Init.RepetitionCounter = 0;
   htim16.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
@@ -2136,7 +2978,7 @@ static void MX_USART1_UART_Init(void)
 
   /* USER CODE END USART1_Init 1 */
   huart1.Instance = USART1;
-  huart1.Init.BaudRate = 9600;
+  huart1.Init.BaudRate = 19200;
   huart1.Init.WordLength = UART_WORDLENGTH_8B;
   huart1.Init.StopBits = UART_STOPBITS_1;
   huart1.Init.Parity = UART_PARITY_NONE;
@@ -2146,7 +2988,7 @@ static void MX_USART1_UART_Init(void)
   huart1.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
   huart1.Init.ClockPrescaler = UART_PRESCALER_DIV1;
   huart1.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
-  if (HAL_UART_Init(&huart1) != HAL_OK)
+  if (HAL_LIN_Init(&huart1, UART_LINBREAKDETECTLENGTH_10B) != HAL_OK)
   {
     Error_Handler();
   }
@@ -2171,6 +3013,102 @@ static void MX_USART1_UART_Init(void)
 }
 
 /**
+  * @brief USART2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART2_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART2_Init 0 */
+
+  /* USER CODE END USART2_Init 0 */
+
+  /* USER CODE BEGIN USART2_Init 1 */
+
+  /* USER CODE END USART2_Init 1 */
+  huart2.Instance = USART2;
+  huart2.Init.BaudRate = 115200;
+  huart2.Init.WordLength = UART_WORDLENGTH_8B;
+  huart2.Init.StopBits = UART_STOPBITS_1;
+  huart2.Init.Parity = UART_PARITY_NONE;
+  huart2.Init.Mode = UART_MODE_TX_RX;
+  huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart2.Init.OverSampling = UART_OVERSAMPLING_16;
+  huart2.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
+  huart2.Init.ClockPrescaler = UART_PRESCALER_DIV1;
+  huart2.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+  if (HAL_LIN_Init(&huart2, UART_LINBREAKDETECTLENGTH_10B) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_SetTxFifoThreshold(&huart2, UART_TXFIFO_THRESHOLD_1_8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_SetRxFifoThreshold(&huart2, UART_RXFIFO_THRESHOLD_1_8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_DisableFifoMode(&huart2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART2_Init 2 */
+
+  /* USER CODE END USART2_Init 2 */
+
+}
+
+/**
+  * @brief USART3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART3_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART3_Init 0 */
+
+  /* USER CODE END USART3_Init 0 */
+
+  /* USER CODE BEGIN USART3_Init 1 */
+
+  /* USER CODE END USART3_Init 1 */
+  huart3.Instance = USART3;
+  huart3.Init.BaudRate = 115200;
+  huart3.Init.WordLength = UART_WORDLENGTH_8B;
+  huart3.Init.StopBits = UART_STOPBITS_1;
+  huart3.Init.Parity = UART_PARITY_NONE;
+  huart3.Init.Mode = UART_MODE_TX_RX;
+  huart3.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart3.Init.OverSampling = UART_OVERSAMPLING_16;
+  huart3.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
+  huart3.Init.ClockPrescaler = UART_PRESCALER_DIV1;
+  huart3.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+  if (HAL_LIN_Init(&huart3, UART_LINBREAKDETECTLENGTH_10B) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_SetTxFifoThreshold(&huart3, UART_TXFIFO_THRESHOLD_1_8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_SetRxFifoThreshold(&huart3, UART_RXFIFO_THRESHOLD_1_8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_DisableFifoMode(&huart3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART3_Init 2 */
+
+  /* USER CODE END USART3_Init 2 */
+
+}
+
+/**
   * Enable DMA controller clock
   */
 static void MX_DMA_Init(void)
@@ -2183,6 +3121,9 @@ static void MX_DMA_Init(void)
   /* DMA1_Channel1_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel1_IRQn);
+  /* DMA1_Channel2_3_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel2_3_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel2_3_IRQn);
 
 }
 
@@ -2194,8 +3135,8 @@ static void MX_DMA_Init(void)
 static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
-/* USER CODE BEGIN MX_GPIO_Init_1 */
-/* USER CODE END MX_GPIO_Init_1 */
+  /* USER CODE BEGIN MX_GPIO_Init_1 */
+  /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOB_CLK_ENABLE();
@@ -2206,105 +3147,120 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, DOOR_RELAY_HSD1_Pin|DOOR_RELAY_HSD2_Pin|FL_WINDORELAY_3_Pin|FL_WINDORELAY_4_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOC, DOOR_RELAY_HSD1_Pin|DOOR_RELAY_HSD2_Pin|Y_RELAY_1_Pin|Y_RELAY_2_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOE, DOOR_RELAY_RR_Pin|DOOR_RELAY_FR_Pin|COM_RELAY_1_Pin|COM_RELAY_2_Pin
-                          |COM_RELAY_3_Pin|COM_RELAY_4_Pin|SPI1_DC_Pin|SPI_Flash_NSS_Pin
-                          |COM_RELAY_5_Pin|IO_SYS_LED_B_Pin|IO_SYS_LED_G_Pin|IO_SYS_LED_R_Pin
-                          |DOOR_RELAY_FL_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOE, DOOR_RELAY_HSD3_Pin|DOOR_RELAY_HSD4_Pin|COM_RELAY_1_Pin|COM_RELAY_2_Pin
+                          |COM_RELAY_3_Pin|LIN_RELAY_Pin|SPI_Flash_NSS_Pin|SPI_TFT_NSS_Pin
+                          |IO_SYS_LED_B_Pin|IO_SYS_LED_G_Pin|IO_SYS_LED_R_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOF, USB_RELAY_1_Pin|USB_RELAY_2_Pin|Y_RELAY_6_Pin|KL15_RELAY_Pin
-                          |FR_WINDORELAY_1_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOF, ST7789_DC_Pin|USB_RELAY_1_Pin|USB_RELAY_2_Pin|Y_RELAY_6_Pin
+                          |KL15_RELAY_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, Y_RELAY_1_Pin|Y_RELAY_2_Pin|Y_RELAY_3_Pin|Y_RELAY_4_Pin
-                          |FL_WINDORELAY_2_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, Y_RELAY_3_Pin|Y_RELAY_4_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, Y_RELAY_5_Pin|COM_RELAY_6_Pin|COM_RELAY_7_Pin|FL_WINDORELAY_1_Pin
-                          |DOOR_RELAY_RL_Pin|DOOR_RELAY_F_Pin|DOOR_RELAY_R_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(Y_RELAY_5_GPIO_Port, Y_RELAY_5_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOD, RL_WINDORELAY_4_Pin|RL_WINDORELAY_3_Pin|RL_WINDORELAY_2_Pin|RL_WINDORELAY_1_Pin
-                          |RR_WINDORELAY_1_Pin|RR_WINDORELAY_2_Pin|RR_WINDORELAY_3_Pin|RR_WINDORELAY_4_Pin
-                          |FR_WINDORELAY_4_Pin|FR_WINDORELAY_3_Pin|FR_WINDORELAY_2_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOD, LIN3_EN_Pin|Eshft_RELAY_Pin|LIN1_EN_Pin|LIN2_EN_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : DOOR_RELAY_HSD1_Pin DOOR_RELAY_HSD2_Pin FL_WINDORELAY_3_Pin FL_WINDORELAY_4_Pin */
-  GPIO_InitStruct.Pin = DOOR_RELAY_HSD1_Pin|DOOR_RELAY_HSD2_Pin|FL_WINDORELAY_3_Pin|FL_WINDORELAY_4_Pin;
+  /*Configure GPIO pins : DOOR_RELAY_HSD1_Pin DOOR_RELAY_HSD2_Pin */
+  GPIO_InitStruct.Pin = DOOR_RELAY_HSD1_Pin|DOOR_RELAY_HSD2_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : DOOR_RELAY_RR_Pin DOOR_RELAY_FR_Pin COM_RELAY_1_Pin COM_RELAY_2_Pin
-                           COM_RELAY_3_Pin COM_RELAY_4_Pin SPI1_DC_Pin COM_RELAY_5_Pin
-                           DOOR_RELAY_FL_Pin */
-  GPIO_InitStruct.Pin = DOOR_RELAY_RR_Pin|DOOR_RELAY_FR_Pin|COM_RELAY_1_Pin|COM_RELAY_2_Pin
-                          |COM_RELAY_3_Pin|COM_RELAY_4_Pin|SPI1_DC_Pin|COM_RELAY_5_Pin
-                          |DOOR_RELAY_FL_Pin;
+  /*Configure GPIO pins : DOOR_RELAY_HSD3_Pin DOOR_RELAY_HSD4_Pin */
+  GPIO_InitStruct.Pin = DOOR_RELAY_HSD3_Pin|DOOR_RELAY_HSD4_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : USB_RELAY_1_Pin USB_RELAY_2_Pin Y_RELAY_6_Pin KL15_RELAY_Pin
-                           FR_WINDORELAY_1_Pin */
-  GPIO_InitStruct.Pin = USB_RELAY_1_Pin|USB_RELAY_2_Pin|Y_RELAY_6_Pin|KL15_RELAY_Pin
-                          |FR_WINDORELAY_1_Pin;
+  /*Configure GPIO pin : XL9555_1_INT_Pin */
+  GPIO_InitStruct.Pin = XL9555_1_INT_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(XL9555_1_INT_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : XL9555_2_INT_Pin */
+  GPIO_InitStruct.Pin = XL9555_2_INT_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(XL9555_2_INT_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : ST7789_DC_Pin */
+  GPIO_InitStruct.Pin = ST7789_DC_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(ST7789_DC_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : USB_RELAY_1_Pin USB_RELAY_2_Pin Y_RELAY_6_Pin KL15_RELAY_Pin */
+  GPIO_InitStruct.Pin = USB_RELAY_1_Pin|USB_RELAY_2_Pin|Y_RELAY_6_Pin|KL15_RELAY_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
   HAL_GPIO_Init(GPIOF, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : Y_RELAY_1_Pin Y_RELAY_2_Pin Y_RELAY_3_Pin Y_RELAY_4_Pin
-                           FL_WINDORELAY_2_Pin */
-  GPIO_InitStruct.Pin = Y_RELAY_1_Pin|Y_RELAY_2_Pin|Y_RELAY_3_Pin|Y_RELAY_4_Pin
-                          |FL_WINDORELAY_2_Pin;
+  /*Configure GPIO pins : Y_RELAY_1_Pin Y_RELAY_2_Pin */
+  GPIO_InitStruct.Pin = Y_RELAY_1_Pin|Y_RELAY_2_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : Y_RELAY_3_Pin Y_RELAY_4_Pin */
+  GPIO_InitStruct.Pin = Y_RELAY_3_Pin|Y_RELAY_4_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : Y_RELAY_5_Pin COM_RELAY_6_Pin COM_RELAY_7_Pin FL_WINDORELAY_1_Pin
-                           DOOR_RELAY_RL_Pin DOOR_RELAY_F_Pin DOOR_RELAY_R_Pin */
-  GPIO_InitStruct.Pin = Y_RELAY_5_Pin|COM_RELAY_6_Pin|COM_RELAY_7_Pin|FL_WINDORELAY_1_Pin
-                          |DOOR_RELAY_RL_Pin|DOOR_RELAY_F_Pin|DOOR_RELAY_R_Pin;
+  /*Configure GPIO pin : Y_RELAY_5_Pin */
+  GPIO_InitStruct.Pin = Y_RELAY_5_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+  HAL_GPIO_Init(Y_RELAY_5_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : SPI_Flash_NSS_Pin */
-  GPIO_InitStruct.Pin = SPI_Flash_NSS_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-  HAL_GPIO_Init(SPI_Flash_NSS_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : RL_WINDORELAY_4_Pin RL_WINDORELAY_3_Pin RL_WINDORELAY_2_Pin RL_WINDORELAY_1_Pin
-                           RR_WINDORELAY_1_Pin RR_WINDORELAY_2_Pin RR_WINDORELAY_3_Pin RR_WINDORELAY_4_Pin
-                           FR_WINDORELAY_4_Pin FR_WINDORELAY_3_Pin FR_WINDORELAY_2_Pin */
-  GPIO_InitStruct.Pin = RL_WINDORELAY_4_Pin|RL_WINDORELAY_3_Pin|RL_WINDORELAY_2_Pin|RL_WINDORELAY_1_Pin
-                          |RR_WINDORELAY_1_Pin|RR_WINDORELAY_2_Pin|RR_WINDORELAY_3_Pin|RR_WINDORELAY_4_Pin
-                          |FR_WINDORELAY_4_Pin|FR_WINDORELAY_3_Pin|FR_WINDORELAY_2_Pin;
+  /*Configure GPIO pins : COM_RELAY_1_Pin COM_RELAY_2_Pin COM_RELAY_3_Pin LIN_RELAY_Pin
+                           SPI_Flash_NSS_Pin SPI_TFT_NSS_Pin */
+  GPIO_InitStruct.Pin = COM_RELAY_1_Pin|COM_RELAY_2_Pin|COM_RELAY_3_Pin|LIN_RELAY_Pin
+                          |SPI_Flash_NSS_Pin|SPI_TFT_NSS_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : LIN3_EN_Pin Eshft_RELAY_Pin LIN1_EN_Pin LIN2_EN_Pin */
+  GPIO_InitStruct.Pin = LIN3_EN_Pin|Eshft_RELAY_Pin|LIN1_EN_Pin|LIN2_EN_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : IO_CFG_1_Pin */
-  GPIO_InitStruct.Pin = IO_CFG_1_Pin;
+  /*Configure GPIO pins : LIN3_NRES_Pin IO_CFG_2_Pin IO_CFG_3_Pin IO_CFG_4_Pin */
+  GPIO_InitStruct.Pin = LIN3_NRES_Pin|IO_CFG_2_Pin|IO_CFG_3_Pin|IO_CFG_4_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(IO_CFG_1_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOF, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : IO_CFG_2_Pin IO_CFG_3_Pin IO_CFG_4_Pin */
-  GPIO_InitStruct.Pin = IO_CFG_2_Pin|IO_CFG_3_Pin|IO_CFG_4_Pin;
+  /*Configure GPIO pin : LIN1_NRES_Pin */
+  GPIO_InitStruct.Pin = LIN1_NRES_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+  HAL_GPIO_Init(LIN1_NRES_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : LIN2_NRES_Pin IO_CFG_1_Pin */
+  GPIO_InitStruct.Pin = LIN2_NRES_Pin|IO_CFG_1_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 
   /*Configure GPIO pins : SW_RIGHT_Pin SW_BUTTON_Pin */
   GPIO_InitStruct.Pin = SW_RIGHT_Pin|SW_BUTTON_Pin;
@@ -2325,17 +3281,8 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
-  /**/
-  __HAL_SYSCFG_FASTMODEPLUS_ENABLE(SYSCFG_FASTMODEPLUS_PB6);
-
-  /**/
-  __HAL_SYSCFG_FASTMODEPLUS_ENABLE(SYSCFG_FASTMODEPLUS_PB7);
-
-  /**/
-  __HAL_SYSCFG_FASTMODEPLUS_ENABLE(SYSCFG_FASTMODEPLUS_PB8);
-
-/* USER CODE BEGIN MX_GPIO_Init_2 */
-/* USER CODE END MX_GPIO_Init_2 */
+  /* USER CODE BEGIN MX_GPIO_Init_2 */
+  /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
@@ -2350,90 +3297,265 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 
 			while(HAL_FDCAN_GetRxFifoFillLevel(&hfdcan1, FDCAN_RX_FIFO0))
 			{
-				HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &FDCAN1_RxHeader,	buf_rec);
-			}
+				HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &FDCAN1_RxHeader, buf_rec);
 
-			TA531_Lock = 1;
+				TA531_Lock = 1;
+				Remote_state = 1;
 
-			if (FDCAN1_RxHeader.Identifier == 0x052)	//TSA_3
-			{
-				TA531SysEnv.TA531_env_KL15 = buf_rec[0]&0x03;
-				TA531SysEnv.TA531_env_USB1 = buf_rec[1]&0x0F;
-				TA531SysEnv.TA531_env_KeyLock = (buf_rec[2]>>0)&0x03;
-				TA531SysEnv.TA531_env_KeyUnlock = (buf_rec[2]>>2)&0x03;
-				TA531SysEnv.TA531_env_KeyRearDoor = (buf_rec[2]>>4)&0x03;
-				TA531SysEnv.TA531_env_KeyBeep = (buf_rec[2]>>6)&0x03;
+				if (FDCAN1_RxHeader.Identifier == 0x052)	//TSA_3
+				{
+				    TA531SysEnv.TA531_env_KL15 = buf_rec[0]&0x03;
+				    TA531SysEnv.TA531_env_USB1 = buf_rec[1]&0x0F;
+				    TA531SysEnv.TA531_env_KeyLock = (buf_rec[2]>>0)&0x03;
+				    TA531SysEnv.TA531_env_KeyUnlock = (buf_rec[2]>>2)&0x03;
+				    TA531SysEnv.TA531_env_KeyRearDoor = (buf_rec[2]>>4)&0x03;
+				    TA531SysEnv.TA531_env_KeyBeep = (buf_rec[2]>>6)&0x03;
 
-				TA531SysEnv.TA531_env_KeyWindow = (buf_rec[3]>>0)&0x03;
-				TA531SysEnv.TA531_env_KeyLeftDoor = (buf_rec[3]>>2)&0x03;
-				TA531SysEnv.TA531_env_KeyRightDoor = (buf_rec[3]>>4)&0x03;
+				    TA531SysEnv.TA531_env_KeyWindow = (buf_rec[3]>>0)&0x03;
+				    TA531SysEnv.TA531_env_KeyLeftDoor = (buf_rec[3]>>2)&0x03;
+				    TA531SysEnv.TA531_env_KeyRightDoor = (buf_rec[3]>>4)&0x03;
 
-				TA531SysEnv.TA531_env_Relay1 = (buf_rec[4]>>0)&0x03;
-				TA531SysEnv.TA531_env_Relay2 = (buf_rec[4]>>2)&0x03;
-				TA531SysEnv.TA531_env_Relay3 = (buf_rec[4]>>4)&0x03;
-				TA531SysEnv.TA531_env_Relay4 = (buf_rec[4]>>6)&0x03;
-				TA531SysEnv.TA531_env_Relay5 = (buf_rec[5]>>0)&0x03;
-				TA531SysEnv.TA531_env_Relay6 = (buf_rec[5]>>2)&0x03;
+				    TA531SysEnv.TA531_env_Relay1 = (buf_rec[4]>>0)&0x03;
+				    TA531SysEnv.TA531_env_Relay2 = (buf_rec[4]>>2)&0x03;
+				    TA531SysEnv.TA531_env_Relay3 = (buf_rec[4]>>4)&0x03;
+				    TA531SysEnv.TA531_env_Relay4 = (buf_rec[4]>>6)&0x03;
+				    TA531SysEnv.TA531_env_Relay5 = (buf_rec[5]>>0)&0x03;
+				    TA531SysEnv.TA531_env_Relay6 = (buf_rec[5]>>2)&0x03;
 
-				//TA531 Ack
-				TSA_Ack_DATA[3] = 1;
-				TSA3_0x52_Flag = 1;
+				    TSA_Ack_DATA[3] = 1;
+				    TSA3_0x52_Flag = 1;
+				}
+				else if (FDCAN1_RxHeader.Identifier == 0x053)	//TSA_4
+				{
+				    TA531SysEnv.TA531_env_WindowFL = (buf_rec[0]>>0)&0x0F;
+				    TA531SysEnv.TA531_env_WindowFR = (buf_rec[0]>>4)&0x0F;
+				    TA531SysEnv.TA531_env_WindowRL = (buf_rec[1]>>0)&0x0F;
+				    TA531SysEnv.TA531_env_WindowRR = (buf_rec[1]>>4)&0x0F;
+
+				    TA531SysEnv.TA531_env_DoorSwF = (buf_rec[4]>>0)&0x03;
+				    TA531SysEnv.TA531_env_DoorSwR = (buf_rec[4]>>2)&0x03;
+				    TA531SysEnv.TA531_env_HSD12_1 = (buf_rec[4]>>4)&0x01;
+				    TA531SysEnv.TA531_env_HSD12_2 = (buf_rec[4]>>5)&0x01;
+				    TA531SysEnv.TA531_env_HSD5_1 = (buf_rec[4]>>6)&0x01;
+				    TA531SysEnv.TA531_env_HSD5_2 = (buf_rec[4]>>7)&0x01;
+
+				    TA531SysEnv.TA531_env_DoorSwFL = (buf_rec[5]>>0)&0x03;
+				    TA531SysEnv.TA531_env_DoorSwFR = (buf_rec[5]>>2)&0x03;
+				    TA531SysEnv.TA531_env_DoorSwRL = (buf_rec[5]>>4)&0x03;
+				    TA531SysEnv.TA531_env_DoorSwRR = (buf_rec[5]>>6)&0x03;
+//				    TA531SysEnv.TA531_env_DoorSwReserve = (buf_rec[5]>>6)&0x03;
+
+				    TA531_Door.Door_FL = (TA531SysEnv.TA531_env_DoorSwFL & 0x03);
+				    TA531_Door.Door_FR = (TA531SysEnv.TA531_env_DoorSwFR & 0x03);
+				    TA531_Door.Door_RL = (TA531SysEnv.TA531_env_DoorSwRL & 0x03);
+				    TA531_Door.Door_Hood = (TA531SysEnv.TA531_env_DoorSwF & 0x03);
+				    TA531_Door.Door_Trunk = (TA531SysEnv.TA531_env_DoorSwR & 0x03);
+//				    TA531_Door.Door_Reserve = (TA531SysEnv.TA531_env_DoorSwReserve & 0x03);
+				    TA531_Door.Door_Reserve = (TA531SysEnv.TA531_env_DoorSwRR & 0x03);
+
+				    TSA_Ack_DATA[4] = 1;
+				    TSA4_0x53_Flag = 1;
+				}
+				else if (FDCAN1_RxHeader.Identifier == 0x054)	//TSA_PWM
+				{
+					TA531SysEnv.TA531_env_PWM_Ag_1 = (buf_rec[0]>>0)&0xFF;
+					TA531SysEnv.TA531_env_PWM_Ag_2 = (buf_rec[1]>>0)&0xFF;
+					TA531SysEnv.TA531_env_PWM_Ag_3 = (buf_rec[2]>>0)&0xFF;
+					TA531SysEnv.TA531_env_PWM_Ag_4 = (buf_rec[3]>>0)&0xFF;
+
+					if(TA531SysEnv.TA531_env_PWM_Ag_1 == 0)
+					{
+						TA531SysEnv.TA531_env_PWM_Ag_1 = ((buf_rec[4]>>0)&0x03) * 90;
+					}
+					if(TA531SysEnv.TA531_env_PWM_Ag_2 == 0)
+					{
+						TA531SysEnv.TA531_env_PWM_Ag_2 = ((buf_rec[4]>>2)&0x03) * 90;
+					}
+					if(TA531SysEnv.TA531_env_PWM_Ag_3 == 0)
+					{
+						TA531SysEnv.TA531_env_PWM_Ag_3 = ((buf_rec[4]>>4)&0x03) * 90;
+					}
+					if(TA531SysEnv.TA531_env_PWM_Ag_4 == 0)
+					{
+						TA531SysEnv.TA531_env_PWM_Ag_4 = ((buf_rec[4]>>6)&0x03) * 90;
+					}
+
+					TA531SysEnv.TA531_env_PWM_Ag_5 = (buf_rec[5]>>0)&0x03 * 90;
+					TA531SysEnv.TA531_env_PWM_Ag_6 = (buf_rec[5]>>2)&0x03 * 90;
+					TA531SysEnv.TA531_env_PWM_Ag_7 = (buf_rec[5]>>4)&0x03 * 90;
+					TA531SysEnv.TA531_env_PWM_Ag_8 = (buf_rec[5]>>6)&0x03 * 90;
+
+					TSA_Ack_DATA[4] = 1;
+					TSA4_0x54_Flag = 1;
+				}
+				else if (FDCAN1_RxHeader.Identifier == 0x103)	//TSA_LIN_SWS G2.5
+				{
+					TA531_LIN_SWS.LIN_SWS2_ErrRespSWS_1 = (buf_rec[0]>>0)&0x01;
+					TA531_LIN_SWS.LIN_SWS2_RespErSWSF_1 = (buf_rec[0]>>1)&0x01;
+
+					TA531_LIN_SWS.LIN_SWS_CCSwStsDistIncSwA_1 = (buf_rec[0]>>4)&0x01;
+					TA531_LIN_SWS.LIN_SWS_CCSwStsCCASwA_1 = (buf_rec[0]>>5)&0x01;
+					TA531_LIN_SWS.LIN_SWS_PfTrTapUpDwnSecySwSta_2 = (buf_rec[0]>>6)&0x03;
+
+					TA531_LIN_SWS.LIN_SWS_CCSwStsSwDataIntgty_2 = (buf_rec[1]>>0)&0x03;
+					TA531_LIN_SWS.LIN_SWS_CCSwStsSpdDecSwA_1 = (buf_rec[1]>>2)&0x01;
+					TA531_LIN_SWS.LIN_SWS_CCSwStsSetSwA_1 = (buf_rec[1]>>3)&0x01;
+					TA531_LIN_SWS.LIN_SWS_CCSwStsRsmSwA_1 = (buf_rec[1]>>4)&0x01;
+					TA531_LIN_SWS.LIN_SWS_CCSwStsOnSwA_1 = (buf_rec[1]>>5)&0x01;
+					TA531_LIN_SWS.LIN_SWS_CCSwStsDistDecSwA_1 = (buf_rec[1]>>6)&0x01;
+					TA531_LIN_SWS.LIN_SWS_CCSwStsCanclSwA_1 = (buf_rec[1]>>7)&0x01;
+
+					TA531_LIN_SWS.LIN_SWS_SWSFastrUserSwA_1 = (buf_rec[2]>>0)&0x01;
+					TA531_LIN_SWS.LIN_SWS_SWSEntrtnUserSwA_1 = (buf_rec[2]>>1)&0x01;
+					TA531_LIN_SWS.LIN_SWS_SWSCnfmSwA_1 = (buf_rec[2]>>2)&0x01;
+					TA531_LIN_SWS.LIN_SWS_StrgWhlTipcSwDataIntgty_1 = (buf_rec[2]>>3)&0x01;
+					TA531_LIN_SWS.LIN_SWS_StrgWhlEntrtnSwDtIntgty_1 = (buf_rec[2]>>4)&0x01;
+					TA531_LIN_SWS.LIN_SWS_StrgWhlDrMdSwDtIntgty_1 = (buf_rec[2]>>5)&0x01;
+					TA531_LIN_SWS.LIN_SWS_StrgWhlDrvngMdSwA_1 = (buf_rec[2]>>6)&0x01;
+					TA531_LIN_SWS.LIN_SWS_CCSwStsSpdIncSwA_1 = (buf_rec[2]>>7)&0x01;
+
+					TA531_LIN_SWS.LIN_SWS_SWSFnChngSwA_1 = (buf_rec[3]>>0)&0x01;
+					TA531_LIN_SWS.LIN_SWS_SWSSelDwnSwA_1 = (buf_rec[3]>>1)&0x01;
+					TA531_LIN_SWS.LIN_SWS_SWSSelLSwA_1 = (buf_rec[3]>>2)&0x01;
+					TA531_LIN_SWS.LIN_SWS_SWSSelRSwA_1 = (buf_rec[3]>>3)&0x01;
+					TA531_LIN_SWS.LIN_SWS_SWSSelUpSwA_1 = (buf_rec[3]>>4)&0x01;
+					TA531_LIN_SWS.LIN_SWS_SWSSocContSwA_1 = (buf_rec[3]>>5)&0x01;
+					TA531_LIN_SWS.LIN_SWS_SWSVcSwA_1 = (buf_rec[3]>>6)&0x01;
+					TA531_LIN_SWS.LIN_SWS_050ms_PDU00_Reserve01_1 = (buf_rec[3]>>7)&0x01;
+
+					TA531_LIN_SWS.LIN_SWS_050ms_PDU00_Reserve02_8 = (buf_rec[4]>>0)&0xff;
+
+					TA531_LIN_SWS.LIN_SWS_SWSLFnChngSwA_1 = (buf_rec[5]>>0)&0x01;
+					TA531_LIN_SWS.LIN_SWS_050ms_PDU00_Reserve03_7 = (buf_rec[5]>>1)&0x7f;
+
+					TSA_Ack_DATA[5] = 1;
+					TSA4_0x103_Flag = 1;
+					lvLED_Sts_LIN = 2;
+				}
+				else if (FDCAN1_RxHeader.Identifier == 0x104)	//TSA_LIN_SWS G3.0
+				{
+				    // 解析CAN数据
+
+				    TA531_LIN_SWS_G3.CCSwStsAlvRC_l = (buf_rec[1]>>0)&0x0f;
+				    TA531_LIN_SWS_G3.SWSSelUpSwAL_l = (buf_rec[1]>>4)&0x03;
+				    TA531_LIN_SWS_G3.SWSSelDwnSwAL_l = (buf_rec[1]>>6)&0x03;
+
+				    DEBUG_CAN_Up = TA531_LIN_SWS_G3.SWSSelUpSwAL_l;
+				    DEBUG_CAN_Down = TA531_LIN_SWS_G3.SWSSelDwnSwAL_l;
+				    DEBUG_CAN_RX_Flag = 1;  // 标记收到新数据
+
+				    TA531_LIN_SWS_G3.SWSSelLSwAL_l = (buf_rec[2]>>0)&0x03;
+				    TA531_LIN_SWS_G3.SWSSelRSwAL_l = (buf_rec[2]>>2)&0x03;
+				    TA531_LIN_SWS_G3.SWSCnfmSwAL_l = (buf_rec[2]>>4)&0x03;
+				    TA531_LIN_SWS_G3.SWSPB1SwAL_l = (buf_rec[2]>>6)&0x03;
+
+				    TA531_LIN_SWS_G3.SWSPB2SwAL_l = (buf_rec[3]>>0)&0x03;
+				    TA531_LIN_SWS_G3.SWSPB3SwAL_l = (buf_rec[3]>>2)&0x03;
+				    TA531_LIN_SWS_G3.SWSSelUpSwReq_l = (buf_rec[3]>>4)&0x03;
+				    TA531_LIN_SWS_G3.SWSSelDwnSwReq_l = (buf_rec[3]>>6)&0x03;
+
+				    TA531_LIN_SWS_G3.SWSSelLSwReq_l = (buf_rec[4]>>0)&0x03;
+				    TA531_LIN_SWS_G3.SWSSelRSwReq_l = (buf_rec[4]>>2)&0x03;
+				    TA531_LIN_SWS_G3.SWSCnfmSwReq_l = (buf_rec[4]>>4)&0x03;
+				    TA531_LIN_SWS_G3.SWSPB1SwReq_l = (buf_rec[4]>>6)&0x03;
+
+				    TA531_LIN_SWS_G3.SWSPB2SwReq_l = (buf_rec[5]>>0)&0x03;
+				    TA531_LIN_SWS_G3.SWSPB3SwReq_l = (buf_rec[5]>>2)&0x03;
+				    TA531_LIN_SWS_G3.PfTrTapUpDwnSecySwSta_l = (buf_rec[5]>>4)&0x03;
+				    TA531_LIN_SWS_G3.PadSSelLSwA_l = (buf_rec[5]>>6)&0x03;
+
+				    TA531_LIN_SWS_G3.PadSSelRSwA_l = (buf_rec[6]>>0)&0x03;
+				    TA531_LIN_SWS_G3.SWSSelLSwStuckL_l = (buf_rec[6]>>2)&0x01;
+				    TA531_LIN_SWS_G3.SWSSelRSwStuckL_l = (buf_rec[6]>>3)&0x01;
+				    TA531_LIN_SWS_G3.SWSCnfmSwStuckL_l = (buf_rec[6]>>4)&0x01;
+				    TA531_LIN_SWS_G3.SWSPB1SwStuckL_l = (buf_rec[6]>>5)&0x01;
+				    TA531_LIN_SWS_G3.SWSPB2SwStuckL_l = (buf_rec[6]>>6)&0x01;
+				    TA531_LIN_SWS_G3.SWSPB3SwStuckL_l = (buf_rec[6]>>7)&0x01;
+
+				    TA531_LIN_SWS_G3.StrgWhlEntrtnSwDataIntgty_l = (buf_rec[7]>>0)&0x01;  // 新增
+				    TA531_LIN_SWS_G3.StrgWhlDrvngMdSwA_l = (buf_rec[7]>>1)&0x01;
+				    TA531_LIN_SWS_G3.StrgWhlDrvngMdSwDataIntgty_l = (buf_rec[7]>>2)&0x01;
+				    TA531_LIN_SWS_G3.StrgWhlTipcSwDataIntgty_l = (buf_rec[7]>>3)&0x01;
+				    TA531_LIN_SWS_G3.PadSSelLSwStuck_l = (buf_rec[7]>>4)&0x01;
+				    TA531_LIN_SWS_G3.PadSSelRSwStuck_l = (buf_rec[7]>>5)&0x01;
+				    TA531_LIN_SWS_G3.RespErSWSF_l = (buf_rec[7]>>6)&0x01;
+
+				    TSA_Ack_DATA[5] = 1;
+				    TSA4_0x104_Flag = 1;
+				    lvLED_Sts_LIN = 2;
+				}
+				else if (FDCAN1_RxHeader.Identifier == 0x064)	//TSA_RC1 mm
+				{
+				    TA531_RC1.TA531_RC_X_trg = (int)((buf_rec[1]<< 8) + (buf_rec[0]<< 0));
+				    if ((buf_rec[2]&0x80) == 0x80)
+				    {	TA531_RC1.TA531_RC_X_Mov = 0 - buf_rec[2];	}
+				    else
+				    {	TA531_RC1.TA531_RC_X_Mov = buf_rec[2];		}
+
+				    TA531_RC1.TA531_RC_Y_trg = (int)((buf_rec[4]<< 8) + (buf_rec[3]<< 0));
+				    if ((buf_rec[5]&0x80) == 0x80)
+				    {	TA531_RC1.TA531_RC_Y_Mov = 0 - buf_rec[5];	}
+				    else
+				    {	TA531_RC1.TA531_RC_Y_Mov = buf_rec[5];		}
+
+				    TA531_RC1.TA531_RC_Z = (int)(buf_rec[6]<< 0);
+				    TA531_RC1.TA531_RC_Z_code = buf_rec[7]&0x03;
+				    TA531_RC1.TA531_RC_Reset = (buf_rec[7]>> 6)&0x03;
+
+				    Clamp_Position(&TA531_RC1.TA531_RC_X_trg, &TA531_RC1.TA531_RC_Y_trg,
+				                   (TA531_RC1.TA531_RC_Reset == 1));
+
+				    TA531_RC1_fg = 2;
+				}
+				else if (FDCAN1_RxHeader.Identifier == 0x065)	//TSA_RC1p %
+				{
+				    TA531_RC1.TA531_RC_X_trg = ScreenSz_1.DispX0_32b + (int)(buf_rec[0]*(ScreenSz_1.DispX1_32b - ScreenSz_1.DispX0_32b)/255);
+
+				    if ((buf_rec[2]&0x80) == 0x80)
+				    {	TA531_RC1.TA531_RC_X_Mov = 0 - buf_rec[2];	}
+				    else
+				    {	TA531_RC1.TA531_RC_X_Mov = buf_rec[2];		}
+
+				    TA531_RC1.TA531_RC_Y_trg = ScreenSz_1.DispY0_32b + (int)(buf_rec[3]*(ScreenSz_1.DispY1_32b - ScreenSz_1.DispY0_32b)/255);
+
+				    if ((buf_rec[5]&0x80) == 0x80)
+				    {	TA531_RC1.TA531_RC_Y_Mov = 0 - buf_rec[5];	}
+				    else
+				    {	TA531_RC1.TA531_RC_Y_Mov = buf_rec[5];		}
+
+				    TA531_RC1.TA531_RC_Z = (int)(buf_rec[6]<< 0);
+				    TA531_RC1.TA531_RC_Z_code = buf_rec[7]&0x03;
+				    TA531_RC1.TA531_RC_Reset = (buf_rec[7]>> 6)&0x03;
+
+				    Clamp_Position(&TA531_RC1.TA531_RC_X_trg, &TA531_RC1.TA531_RC_Y_trg,
+				                   (TA531_RC1.TA531_RC_Reset == 1));
+
+				    TA531_RC1_fg = 2;
+				}
+				else if (FDCAN1_RxHeader.Identifier == 0x531)	//TSA_ACK for RESET
+				{
+					if((buf_rec[0]==0x05)&&(buf_rec[1]==0x31)&&(buf_rec[2]==0x00)&&(buf_rec[3]==0x00)&&(buf_rec[4]==0x00)&&(buf_rec[5]==0x00)&&(buf_rec[6]==0x00)&&(buf_rec[7]==0x00))
+					{
+						Remote_state = 0;
+						TA531_Lock = 0;
+						lvLED_Sts_LIN = 0;
+					}
+				}
+
+				// 每帧都发送ACK并清空
 				HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TSA_Ack_Header, TSA_Ack_DATA);
-				TSA_Ack_DATA[3] = 0;
-			}
-			else if (FDCAN1_RxHeader.Identifier == 0x053)	//TSA_4
-			{
-				TA531SysEnv.TA531_env_WindowFL = (buf_rec[0]>>0)&0x0F;
-				TA531SysEnv.TA531_env_WindowFR = (buf_rec[0]>>4)&0x0F;
-				TA531SysEnv.TA531_env_WindowRL = (buf_rec[1]>>0)&0x0F;
-				TA531SysEnv.TA531_env_WindowRR = (buf_rec[1]>>4)&0x0F;
+				memset(TSA_Ack_DATA, 0, 8);
 
-				TA531SysEnv.TA531_env_DoorSwF = (buf_rec[4]>>0)&0x03;
-				TA531SysEnv.TA531_env_DoorSwR = (buf_rec[4]>>2)&0x03;
-				TA531SysEnv.TA531_env_DoorSwFL = (buf_rec[5]>>0)&0x03;
-				TA531SysEnv.TA531_env_DoorSwFR = (buf_rec[5]>>2)&0x03;
-				TA531SysEnv.TA531_env_DoorSwRL = (buf_rec[5]>>4)&0x03;
-				TA531SysEnv.TA531_env_DoorSwRR = (buf_rec[5]>>6)&0x03;
-
-				//TA531 Ack
-				TSA_Ack_DATA[4] = 1;
-				TSA4_0x53_Flag = 1;
-				HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TSA_Ack_Header, TSA_Ack_DATA);
-				TSA_Ack_DATA[4] = 0;
-			}
-			else if (FDCAN1_RxHeader.Identifier == 0x064)	//TSA_RC1
-			{
-				TA531_RC1.TA531_RC_X_trg = (int)((buf_rec[1]<< 8) + (buf_rec[0]<< 0));	//(int)
-				if ((buf_rec[2]&0x80) == 0x80)	//<0
-				{		TA531_RC1.TA531_RC_X_Mov = 0 - buf_rec[2];		}
-				else
-				{		TA531_RC1.TA531_RC_X_Mov = buf_rec[2];			}
-
-				TA531_RC1.TA531_RC_Y_trg = (int)((buf_rec[4]<< 8) + (buf_rec[3]<< 0));
-				if ((buf_rec[5]&0x80) == 0x80)	//<0
-				{		TA531_RC1.TA531_RC_Y_Mov = 0 - buf_rec[5];		}
-				else
-				{		TA531_RC1.TA531_RC_Y_Mov = buf_rec[5];			}
-				TA531_RC1.TA531_RC_Z = (int)(buf_rec[6]<< 0);
-				TA531_RC1.TA531_RC_Z_code = buf_rec[7]&0x03;
-				TA531_RC1.TA531_RC_Reset = (buf_rec[7]>> 6)&0x03;
-
-
-				TA531_RC1_fg = 2;	//// 0-Error;	1-no task;	2-command received;	3-task accomplish;
-//				TA531_RC1_x_ready = 0;
-//				TA531_RC1_y_ready = 0;
-//				TA531_RC1_fg = 2;
-			}
-		}
-	}
-}
+			}  // while结束
+		}  // if hfdcan == &hfdcan1 结束
+	}  // if RxFifo0ITs 结束
+}  // 函数结束
 
 void HAL_FDCAN_RxFifo1Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo1ITs)
 {
 	if ((RxFifo1ITs & FDCAN_IT_RX_FIFO1_NEW_MESSAGE) != RESET)
 	{
-
-		if (hfdcan == &hfdcan2) 	//CAN1 Classic CAN
+		if (hfdcan == &hfdcan2) 	//CAN2 Classic CAN
 		{
 			uint8_t buf_rec[8];
 
@@ -2444,7 +3566,6 @@ void HAL_FDCAN_RxFifo1Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo1ITs)
 
 			if (FDCAN2_RxHeader.Identifier == HostID)	//
 			{
-
 
 				uint16_t TeMP = (buf_rec[0]<<3)+((buf_rec[1]>>5)&0x07);
 				if(TeMP == M1_ID)	//X
@@ -2461,12 +3582,7 @@ void HAL_FDCAN_RxFifo1Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo1ITs)
 						{
 							MotorCtrl_M1.M_Position = (buf_rec[3] + (buf_rec[4]<< 8) + (buf_rec[5]<< 16) + (buf_rec[6]<< 24))/160 ;
 
-							TA531_RC1.TA531_RC_X_act = MotorCtrl_M1.M_Position -10;
-
-//							char str1[16] = {0};
-//							itoa(MotorCtrl_M1.M_Position ,str1,10);
-//							OLED_ShowString(OLED_I2C_ch ,OLED_type,12, 1, str1);
-
+							TA531_RC1.TA531_RC_X_act = -(MotorCtrl_M1.M_Position - 10);
 						}
 
 						if ((buf_rec[7]>> 4 )>0)	//
@@ -2487,10 +3603,6 @@ void HAL_FDCAN_RxFifo1Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo1ITs)
 						if ((MotorInit_M2 == 2)&(buf_rec[2] == 0x42))	//X_Position
 						{
 							MotorCtrl_M2.M_Position = (buf_rec[3] + (buf_rec[4]<< 8) + (buf_rec[5]<< 16) + (buf_rec[6]<< 24))/160 ;
-
-//							char str1[16] = {0};
-//							itoa(MotorCtrl_M2.M_Position ,str1,10);
-//							OLED_ShowString(OLED_I2C_ch ,OLED_type,8, 3, str1);
 						}
 
 						if ((buf_rec[7]>> 4 )>0)	//
@@ -2514,11 +3626,7 @@ void HAL_FDCAN_RxFifo1Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo1ITs)
 						{
 							MotorCtrl_M3.M_Position = (buf_rec[3] + (buf_rec[4]<< 8) + (buf_rec[5]<< 16) + (buf_rec[6]<< 24))/160 ;
 
-							TA531_RC1.TA531_RC_Y_act = MotorCtrl_M3.M_Position -10;
-
-//							char str1[16] = {0};
-//							itoa(MotorCtrl_M3.M_Position ,str1,10);
-//							OLED_ShowString(OLED_I2C_ch ,OLED_type,8, 3, str1);
+							TA531_RC1.TA531_RC_Y_act = -(MotorCtrl_M3.M_Position - 10);
 						}
 
 						if ((buf_rec[7]>> 4 )>0)	//
@@ -2543,17 +3651,65 @@ void HAL_FDCAN_RxFifo1Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo1ITs)
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
-	if (htim == &htim6)	//50ms
+	if (htim == &htim6)	//500ms
 	{
-		HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TSA1_ADC_Header, TSA1_ADC_DATA);
-		HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TSA2_LS_Header, TSA2_LS_DATA);
+		temper_flag = 1;
+
 	}
 	if (htim == &htim7)	//100ms
 	{
-		if((Web_ConnectSts < 255)&(Web_ConnectSts > 0))
+
+
+		////GPIO	// SW_UP, SW_UP_pre, SW_DW, SW_DW_pre, SW_LEFT, SW_LEFT_pre, SW_RIGHT, SW_RIGHT_pre, SW_BUTTON, SW_BUTTON_pre;
+		SW_UP_pre = SW_UP;
+		SW_DW_pre = SW_DW;
+		SW_LEFT_pre = SW_LEFT;
+		SW_RIGHT_pre = SW_RIGHT;
+		SW_BUTTON_pre = SW_BUTTON;
+
+		if (HAL_GPIO_ReadPin(SW_UP_GPIO_Port,SW_UP_Pin) == 0)
 		{
-			Web_ConnectSts--;
+			SW_UP = 1;
+//			OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 3, "SW_UP     " );
+		}else
+		{
+			SW_UP = 0;
 		}
+		if (HAL_GPIO_ReadPin(SW_DOWN_GPIO_Port,SW_DOWN_Pin) == 0)
+		{
+			SW_DW = 1;
+//			OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 3, "SW_DW     " );
+		}else
+		{
+			SW_DW = 0;
+		}
+		if (HAL_GPIO_ReadPin(SW_LEFT_GPIO_Port,SW_LEFT_Pin) == 0)
+		{
+			SW_LEFT = 1;
+//			OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 3, "SW_LF     " );
+		}else
+		{
+			SW_LEFT = 0;
+		}
+		if (HAL_GPIO_ReadPin(SW_RIGHT_GPIO_Port,SW_RIGHT_Pin) == 0)
+		{
+			SW_RIGHT = 1;
+//			OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 3, "SW_RT     " );
+		}else
+		{
+			SW_RIGHT = 0;
+		}
+		if (HAL_GPIO_ReadPin(SW_BUTTON_GPIO_Port,SW_BUTTON_Pin) == 0)
+		{
+			SW_BUTTON = 1;
+//			OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 3, "SW_BT     " );
+		}else
+		{
+			SW_BUTTON = 0;
+		}
+
+		////Sys state
+
 
 		sys_state++;
 
@@ -2562,39 +3718,39 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 		switch(sys_state)
 		{
 		case 0:		//none
-			HAL_GPIO_WritePin(GPIOB, IO_SYS_LED_B_Pin, 0);
-			HAL_GPIO_WritePin(GPIOE, IO_SYS_LED_G_Pin, 0);
-			HAL_GPIO_WritePin(GPIOE, IO_SYS_LED_R_Pin, 0);
+			HAL_GPIO_WritePin(IO_SYS_LED_B_GPIO_Port, IO_SYS_LED_B_Pin, 0);
+			HAL_GPIO_WritePin(IO_SYS_LED_G_GPIO_Port, IO_SYS_LED_G_Pin, 0);
+			HAL_GPIO_WritePin(IO_SYS_LED_R_GPIO_Port, IO_SYS_LED_R_Pin, 0);
 			break;
 		case 1:		//green
-			HAL_GPIO_WritePin(GPIOB, IO_SYS_LED_B_Pin, 0);
-			HAL_GPIO_WritePin(GPIOE, IO_SYS_LED_G_Pin, 1);
-			HAL_GPIO_WritePin(GPIOE, IO_SYS_LED_R_Pin, 0);
+			HAL_GPIO_WritePin(IO_SYS_LED_B_GPIO_Port, IO_SYS_LED_B_Pin, 0);
+			HAL_GPIO_WritePin(IO_SYS_LED_G_GPIO_Port, IO_SYS_LED_G_Pin, 1);
+			HAL_GPIO_WritePin(IO_SYS_LED_R_GPIO_Port, IO_SYS_LED_R_Pin, 0);
 			break;
 		case 2:		//cyan
-			HAL_GPIO_WritePin(GPIOB, IO_SYS_LED_B_Pin, 1);
-			HAL_GPIO_WritePin(GPIOE, IO_SYS_LED_G_Pin, 1);
-			HAL_GPIO_WritePin(GPIOE, IO_SYS_LED_R_Pin, 0);
+			HAL_GPIO_WritePin(IO_SYS_LED_B_GPIO_Port, IO_SYS_LED_B_Pin, 1);
+			HAL_GPIO_WritePin(IO_SYS_LED_G_GPIO_Port, IO_SYS_LED_G_Pin, 1);
+			HAL_GPIO_WritePin(IO_SYS_LED_R_GPIO_Port, IO_SYS_LED_R_Pin, 0);
 			break;
 		case 3:		//blue
-			HAL_GPIO_WritePin(GPIOB, IO_SYS_LED_B_Pin, 1);
-			HAL_GPIO_WritePin(GPIOE, IO_SYS_LED_G_Pin, 0);
-			HAL_GPIO_WritePin(GPIOE, IO_SYS_LED_R_Pin, 0);
+			HAL_GPIO_WritePin(IO_SYS_LED_B_GPIO_Port, IO_SYS_LED_B_Pin, 1);
+			HAL_GPIO_WritePin(IO_SYS_LED_G_GPIO_Port, IO_SYS_LED_G_Pin, 0);
+			HAL_GPIO_WritePin(IO_SYS_LED_R_GPIO_Port, IO_SYS_LED_R_Pin, 0);
 			break;
 		case 4:		//yellow
-			HAL_GPIO_WritePin(GPIOB, IO_SYS_LED_B_Pin, 0);
-			HAL_GPIO_WritePin(GPIOE, IO_SYS_LED_G_Pin, 1);
-			HAL_GPIO_WritePin(GPIOE, IO_SYS_LED_R_Pin, 1);
+			HAL_GPIO_WritePin(IO_SYS_LED_B_GPIO_Port, IO_SYS_LED_B_Pin, 0);
+			HAL_GPIO_WritePin(IO_SYS_LED_G_GPIO_Port, IO_SYS_LED_G_Pin, 1);
+			HAL_GPIO_WritePin(IO_SYS_LED_R_GPIO_Port, IO_SYS_LED_R_Pin, 1);
 			break;
 		case 5:		//purple
-			HAL_GPIO_WritePin(GPIOB, IO_SYS_LED_B_Pin, 1);
-			HAL_GPIO_WritePin(GPIOE, IO_SYS_LED_G_Pin, 0);
-			HAL_GPIO_WritePin(GPIOE, IO_SYS_LED_R_Pin, 1);
+			HAL_GPIO_WritePin(IO_SYS_LED_B_GPIO_Port, IO_SYS_LED_B_Pin, 1);
+			HAL_GPIO_WritePin(IO_SYS_LED_G_GPIO_Port, IO_SYS_LED_G_Pin, 0);
+			HAL_GPIO_WritePin(IO_SYS_LED_R_GPIO_Port, IO_SYS_LED_R_Pin, 1);
 			break;
 		case 6:		//red
-			HAL_GPIO_WritePin(GPIOB, IO_SYS_LED_B_Pin, 0);
-			HAL_GPIO_WritePin(GPIOE, IO_SYS_LED_G_Pin, 0);
-			HAL_GPIO_WritePin(GPIOE, IO_SYS_LED_R_Pin, 1);
+			HAL_GPIO_WritePin(IO_SYS_LED_B_GPIO_Port, IO_SYS_LED_B_Pin, 0);
+			HAL_GPIO_WritePin(IO_SYS_LED_G_GPIO_Port, IO_SYS_LED_G_Pin, 0);
+			HAL_GPIO_WritePin(IO_SYS_LED_R_GPIO_Port, IO_SYS_LED_R_Pin, 1);
 			break;
 		}
 
@@ -2633,16 +3789,73 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 		}
 
 
-//		SPI_Flash_WriteSomeBytes(&Sys_CNT, Sys_CNT_Addr, sizeof(Sys_CNT));
-//		SPI_Flash_WriteSomeBytes(&Sys_RunCNT, Sys_RunCNT_Addr, sizeof(Sys_RunCNT));
+
+
+///////// XL9555
+		uint8_t XL9555_tempdata;
+		XL9555_tempdata = XL9555_Read(XL9555_1_addr_read, 0);
+		TA531_GP_IN.GP_IN_1_1 = !((XL9555_tempdata >> 0) & 0x01);
+		TA531_GP_IN.GP_IN_1_2 = !((XL9555_tempdata >> 1) & 0x01);
+		TA531_GP_IN.GP_IN_1_3 = !((XL9555_tempdata >> 2) & 0x01);
+		TA531_GP_IN.GP_IN_1_4 = !((XL9555_tempdata >> 3) & 0x01);
+		TA531_GP_IN.GP_IN_1_5 = !((XL9555_tempdata >> 4) & 0x01);
+		TA531_GP_IN.GP_IN_1_6 = !((XL9555_tempdata >> 5) & 0x01);
+		TA531_GP_IN.GP_IN_1_7 = !((XL9555_tempdata >> 6) & 0x01);
+		TA531_GP_IN.GP_IN_1_8 = !((XL9555_tempdata >> 7) & 0x01);
+
+		XL9555_tempdata = XL9555_Read(XL9555_1_addr_read, 1);
+		TA531_GP_IN.GP_IN_2_8 = !((XL9555_tempdata >> 0) & 0x01);
+		TA531_GP_IN.GP_IN_2_7 = !((XL9555_tempdata >> 1) & 0x01);
+		TA531_GP_IN.GP_IN_2_6 = !((XL9555_tempdata >> 2) & 0x01);
+		TA531_GP_IN.GP_IN_2_5 = !((XL9555_tempdata >> 3) & 0x01);
+		TA531_GP_IN.GP_IN_2_4 = !((XL9555_tempdata >> 4) & 0x01);
+		TA531_GP_IN.GP_IN_2_3 = !((XL9555_tempdata >> 5) & 0x01);
+		TA531_GP_IN.GP_IN_2_2 = !((XL9555_tempdata >> 6) & 0x01);
+		TA531_GP_IN.GP_IN_2_1 = !((XL9555_tempdata >> 7) & 0x01);
+
+		XL9555_tempdata = XL9555_Read(XL9555_2_addr_read, 0);
+		TA531_GP_IN.GP_IN_3_1 = !((XL9555_tempdata >> 0) & 0x01);
+		TA531_GP_IN.GP_IN_3_2 = !((XL9555_tempdata >> 1) & 0x01);
+		TA531_GP_IN.GP_IN_3_3 = !((XL9555_tempdata >> 2) & 0x01);
+		TA531_GP_IN.GP_IN_3_4 = !((XL9555_tempdata >> 3) & 0x01);
+		TA531_GP_IN.GP_IN_3_5 = !((XL9555_tempdata >> 4) & 0x01);
+		TA531_GP_IN.GP_IN_3_6 = !((XL9555_tempdata >> 5) & 0x01);
+		TA531_GP_IN.GP_IN_3_7 = !((XL9555_tempdata >> 6) & 0x01);
+		TA531_GP_IN.GP_IN_3_8 = !((XL9555_tempdata >> 7) & 0x01);
+
+		XL9555_tempdata = XL9555_Read(XL9555_2_addr_read, 1);
+		TA531_GP_IN.GP_IN_4_8 = !((XL9555_tempdata >> 0) & 0x01);
+		TA531_GP_IN.GP_IN_4_7 = !((XL9555_tempdata >> 1) & 0x01);
+		TA531_GP_IN.GP_IN_4_6 = !((XL9555_tempdata >> 2) & 0x01);
+		TA531_GP_IN.GP_IN_4_5 = !((XL9555_tempdata >> 3) & 0x01);
+		TA531_GP_IN.GP_IN_4_4 = !((XL9555_tempdata >> 4) & 0x01);
+		TA531_GP_IN.GP_IN_4_3 = !((XL9555_tempdata >> 5) & 0x01);
+		TA531_GP_IN.GP_IN_4_2 = !((XL9555_tempdata >> 6) & 0x01);
+		TA531_GP_IN.GP_IN_4_1 = !((XL9555_tempdata >> 7) & 0x01);
+
+
+		TSA_GP_IN_DATA[0] = ((TA531_GP_IN.GP_IN_1_1 & 0x03) << 0) + ((TA531_GP_IN.GP_IN_1_2 & 0x03) << 2) + ((TA531_GP_IN.GP_IN_1_3 & 0x03) << 4) + ((TA531_GP_IN.GP_IN_1_4 & 0x03) << 6);
+		TSA_GP_IN_DATA[1] = ((TA531_GP_IN.GP_IN_1_5 & 0x03) << 0) + ((TA531_GP_IN.GP_IN_1_6 & 0x03) << 2) + ((TA531_GP_IN.GP_IN_1_7 & 0x03) << 4) + ((TA531_GP_IN.GP_IN_1_8 & 0x03) << 6);
+		TSA_GP_IN_DATA[2] = ((TA531_GP_IN.GP_IN_2_1 & 0x03) << 0) + ((TA531_GP_IN.GP_IN_2_2 & 0x03) << 2) + ((TA531_GP_IN.GP_IN_2_3 & 0x03) << 4) + ((TA531_GP_IN.GP_IN_2_4 & 0x03) << 6);
+		TSA_GP_IN_DATA[3] = ((TA531_GP_IN.GP_IN_2_5 & 0x03) << 0) + ((TA531_GP_IN.GP_IN_2_6 & 0x03) << 2) + ((TA531_GP_IN.GP_IN_2_7 & 0x03) << 4) + ((TA531_GP_IN.GP_IN_2_8 & 0x03) << 6);
+		TSA_GP_IN_DATA[4] = ((TA531_GP_IN.GP_IN_3_1 & 0x03) << 0) + ((TA531_GP_IN.GP_IN_3_2 & 0x03) << 2) + ((TA531_GP_IN.GP_IN_3_3 & 0x03) << 4) + ((TA531_GP_IN.GP_IN_3_4 & 0x03) << 6);
+		TSA_GP_IN_DATA[5] = ((TA531_GP_IN.GP_IN_3_5 & 0x03) << 0) + ((TA531_GP_IN.GP_IN_3_6 & 0x03) << 2) + ((TA531_GP_IN.GP_IN_3_7 & 0x03) << 4) + ((TA531_GP_IN.GP_IN_3_8 & 0x03) << 6);
+		TSA_GP_IN_DATA[6] = ((TA531_GP_IN.GP_IN_4_1 & 0x03) << 0) + ((TA531_GP_IN.GP_IN_4_2 & 0x03) << 2) + ((TA531_GP_IN.GP_IN_4_3 & 0x03) << 4) + ((TA531_GP_IN.GP_IN_4_4 & 0x03) << 6);
+		TSA_GP_IN_DATA[7] = ((TA531_GP_IN.GP_IN_4_5 & 0x03) << 0) + ((TA531_GP_IN.GP_IN_4_6 & 0x03) << 2) + ((TA531_GP_IN.GP_IN_4_7 & 0x03) << 4) + ((TA531_GP_IN.GP_IN_4_8 & 0x03) << 6);
+
+
+		HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TSA_GP_IN_Header, TSA_GP_IN_DATA);
 
 	}
 
-	if (htim == &htim16)	//5ms
+	if (htim == &htim16)	//50ms
 	{
-		Sys_TIM_Flag = 1;	//for CAN
+		HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TSA1_ADC_Header, TSA1_ADC_DATA);
+		HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TSA2_LS_Header, TSA2_LS_DATA);
 
 
+
+		////for touchpen short/long time count
 		Sys_TIM_TICK = Sys_TIM_TICK + 5;
 
 		if(Sys_TIM_TICK > 0xFFFFFFF0)
@@ -2652,40 +3865,287 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 	}
 	if (htim == &htim17)	//1ms
 	{
-
+		lv_tick_inc(1);
 	}
 
 }
 
-
-
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+uint8_t Lin_CheckPID(uint8_t id)
 {
+	uint8_t returnpid ;
+	uint8_t P0 ;
+	uint8_t P1 ;
 
-	OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 2, "Uart_Callback!! ");
+	P0 = (((id)^(id>>1)^(id>>2)^(id>>4))&0x01)<<6 ;
+	P1 = ((~((id>>1)^(id>>3)^(id>>4)^(id>>5)))&0x01)<<7 ;
 
-	if  (huart == &huart1)
+	returnpid = id|P0|P1 ;
+
+	return returnpid ;
+}
+
+// 是经典校验还是增强校验，另：诊断帧只能经典校�??????????????????????????????????????????????????
+uint8_t Lin_Checksum(uint8_t id , uint8_t *data)
+{
+	uint8_t t ;
+	uint16_t sum ;
+
+	sum = data[0];
+	if(id == 0x3c)			// 如果是诊断帧，用经典校验
 	{
-		for (int i = 0; i < Serial_Data_LENGTH ; i++)
+		for(t=1;t<8;t++)
 		{
-			RxData[i] = u1RxData[i];
+			sum += data[t];
+			if(sum&0xff00)
+			{
+				sum&=0x00ff;
+				sum+=1;
+			}
+		}
+		sum = ~sum;
+		data[8] = sum;
+	//	return (uint8_t)sum ;
+	}
+
+	for(t=1;t<8;t++)
+	{
+		sum += data[t];
+		if(sum&0xff00)
+		{
+			sum&=0x00ff;
+			sum+=1;
+		}
+	}
+	sum+=Lin_CheckPID(id);
+	if(sum&0xff00)
+	{
+		sum&=0x00ff;
+		sum+=1;
+	}
+	sum = ~sum;
+	data[8] = sum;
+	return (uint8_t)sum ;
+}
+
+void Lin_SendData(uint8_t *data)
+{
+	Lin_Checksum(ReceiveID , data);
+
+	HAL_UART_Transmit_IT(&huart1, data, 9);
+
+	lvLED_Sts_LIN = 1;
+}
+
+void Lin_DataProcess_loop(void)	//asap, if need to deal with LIN data; if not ,seems no use
+{
+	//// ========== 直接打包 SWS_0x22_Data，无条件执行（像main1_1.c一样）==========
+//	SWS_0x22_Data[0] = 0;	//	CCSwStsChksm
+    static uint8_t counter = 0;  // 静态变量，保持计数状态
+
+    SWS_0x22_Data[0] = counter;  // 赋值给Byte 0
+    counter++;
+
+	SWS_0x22_Data[1] = ((TA531_LIN_SWS_G3.CCSwStsAlvRC_l & 0x0f) << 0) +
+			((TA531_LIN_SWS_G3.SWSSelUpSwAL_l & 0x03)<< 4 )+
+			((TA531_LIN_SWS_G3.SWSSelDwnSwAL_l & 0x03)<< 6 );
+	DEBUG_LIN_Byte1 = SWS_0x22_Data[1];
+	DEBUG_LIN_Pack_Flag = 1;
+
+	SWS_0x22_Data[2] = ((TA531_LIN_SWS_G3.SWSSelLSwAL_l & 0x03) << 0) +
+			((TA531_LIN_SWS_G3.SWSSelRSwAL_l & 0x03)<< 2 )+
+			((TA531_LIN_SWS_G3.SWSCnfmSwAL_l & 0x03)<< 4 )+
+			((TA531_LIN_SWS_G3.SWSPB1SwAL_l & 0x03)<< 6 );
+
+	SWS_0x22_Data[3] = ((TA531_LIN_SWS_G3.SWSPB2SwAL_l & 0x03) << 0) +
+			((TA531_LIN_SWS_G3.SWSPB3SwAL_l & 0x03)<< 2 )+
+			((TA531_LIN_SWS_G3.SWSSelUpSwReq_l & 0x03)<< 4 )+
+			((TA531_LIN_SWS_G3.SWSSelDwnSwReq_l & 0x03)<< 6 );
+
+	SWS_0x22_Data[4] = ((TA531_LIN_SWS_G3.SWSSelLSwReq_l & 0x03) << 0) +
+			((TA531_LIN_SWS_G3.SWSSelRSwReq_l & 0x03)<< 2 )+
+			((TA531_LIN_SWS_G3.SWSCnfmSwReq_l & 0x03)<< 4 )+
+			((TA531_LIN_SWS_G3.SWSPB1SwReq_l & 0x03)<< 6 );
+
+	SWS_0x22_Data[5] = ((TA531_LIN_SWS_G3.SWSPB2SwReq_l & 0x03) << 0) +
+			((TA531_LIN_SWS_G3.SWSPB3SwReq_l & 0x03)<< 2 )+
+			((TA531_LIN_SWS_G3.PfTrTapUpDwnSecySwSta_l & 0x03)<< 4 )+
+			((TA531_LIN_SWS_G3.PadSSelLSwA_l & 0x03)<< 6 );
+
+	SWS_0x22_Data[6] = ((TA531_LIN_SWS_G3.PadSSelRSwA_l & 0x03) << 0) +
+			((TA531_LIN_SWS_G3.SWSSelLSwStuckL_l & 0x01)<< 2 )+
+			((TA531_LIN_SWS_G3.SWSSelRSwStuckL_l & 0x01)<< 3 )+
+			((TA531_LIN_SWS_G3.SWSCnfmSwStuckL_l & 0x01)<< 4 )+
+			((TA531_LIN_SWS_G3.SWSPB1SwStuckL_l & 0x01)<< 5 )+
+			((TA531_LIN_SWS_G3.SWSPB2SwStuckL_l & 0x01)<< 6 )+
+			((TA531_LIN_SWS_G3.SWSPB3SwStuckL_l & 0x01)<< 7 );
+
+	SWS_0x22_Data[7] = ((TA531_LIN_SWS_G3.StrgWhlEntrtnSwDataIntgty_l & 0x01)<< 0 )+
+	        ((TA531_LIN_SWS_G3.StrgWhlDrvngMdSwA_l & 0x01)<< 1 )+
+	        ((TA531_LIN_SWS_G3.StrgWhlDrvngMdSwDataIntgty_l & 0x01)<< 2 )+
+	        ((TA531_LIN_SWS_G3.StrgWhlTipcSwDataIntgty_l & 0x01)<< 3 )+
+	        ((TA531_LIN_SWS_G3.PadSSelLSwStuck_l & 0x01)<< 4 )+
+	        ((TA531_LIN_SWS_G3.PadSSelRSwStuck_l & 0x01)<< 5 )+
+	        ((TA531_LIN_SWS_G3.RespErSWSF_l & 0x01)<< 6 );
+
+	//// ========== 处理接收到的LIN数据 ==========
+	uint8_t PIDChecksum;
+	uint8_t SumCheck;
+
+	if(DataReceiveflag == 1)
+	{
+		ReceiveID = ReceivePID&0x3f;
+		PIDChecksum = Lin_CheckPID(ReceiveID);
+		if (PIDChecksum != ReceivePID)
+		{		return;	}
+
+		if(FrameReceiveOverFlag == 1)
+		{
+			SumCheck = Lin_Checksum(ReceiveID,LinReceiveData);
+			if(ReceiveCheckSum != SumCheck)
+			{		return;		}
+
+			if(ReceiveID == 0x23)
+			{
+				if(LinReceiveData[3] == 0x01)
+				{	}
+				else if(LinReceiveData[3] == 0x02)
+				{	}
+			}
+		}
+		FrameReceiveOverFlag = 0;
+		DataReceiveflag = 0;
+	}
+}
+
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+	if (huart == &huart1) {
+		if (LIN_Data_LENGTH == 1) {
+			ReceiveData = u1RxData[0];
+		} else {
+			for (int i = 0; i < LIN_Data_LENGTH; i++) {
+				RxData[i] = u1RxData[i];
+			}
+			ReceiveData = u1RxData[0];
 		}
 
-		UART_RESET(&huart1);
-		HAL_UART_Receive_IT(&huart1,u1RxData, Serial_Data_LENGTH );
+//		if (DataProcess == 0) {
+//			if (ReceiveData != 0x55) {
+//				LIN_RESET(&huart1);
+//				HAL_UART_Receive_IT(&huart1, u1RxData, LIN_Data_LENGTH);
+//				return;
+//			}
+//			if (ReceiveData == 0x55) {
+//				DataProcess = 1;
+//
+//				LIN_RESET(&huart1);
+//				HAL_UART_Receive_IT(&huart1, u1RxData, LIN_Data_LENGTH);
+//				return;
+//			}
+//		} else if (DataProcess == 1) {
+			ReceivePID = ReceiveData;
+			ReceiveID = ReceivePID & 0x3f;
+
+			DEBUG_UART_RX_Count++;
+			DEBUG_ReceiveID = ReceiveID;
+			DEBUG_DataProcess = DataProcess;
+
+			if (ReceiveID == 0x22)  // ← 改成0x22
+					{
+				DEBUG_LIN_Send_Count++;
+				Lin_SendData(SWS_0x22_Data);
+				SWS_0x22_Flag = 0;
+				DataProcess = 0;
+
+				LIN_RESET(&huart1);
+				HAL_UART_Receive_IT(&huart1, u1RxData, LIN_Data_LENGTH);
+				return;
+			} else {
+				DataReceiveflag = 1;
+				DataProcess = 2;
+
+				LIN_RESET(&huart1);
+				HAL_UART_Receive_IT(&huart1, u1RxData, LIN_Data_LENGTH);
+				return;
+			}
+
+//		if(DataProcess == 0)
+//		{
+//			if(ReceiveData != 0x55)
+//			{
+//				LIN_RESET(&huart1);
+//				HAL_UART_Receive_IT(&huart1,u1RxData, LIN_Data_LENGTH );
+//				return ;
+//			}
+//			if(ReceiveData == 0x55)
+//			{
+//				DataProcess = 1 ;
+//
+//				LIN_RESET(&huart1);
+//				HAL_UART_Receive_IT(&huart1,u1RxData, LIN_Data_LENGTH );
+//				return ;
+//			}
+//		}
+////		111111111111111111111111111111111111111111111111111111111111111
+//		else if(DataProcess == 1)
+//		{
+//		    ReceivePID = ReceiveData;
+//		    ReceiveID = ReceivePID & 0x3f;
+//
+//		    DEBUG_UART_RX_Count++;
+//		    DEBUG_ReceiveID = ReceiveID;
+//		    DEBUG_DataProcess = DataProcess;
+//
+//		    if(ReceiveID == 0x22)  // ← 改成0x22
+//		    {
+//		        DEBUG_LIN_Send_Count++;
+//		        Lin_SendData(SWS_0x22_Data);
+//		        SWS_0x22_Flag = 0;
+//		        DataProcess = 0;
+//
+//		        LIN_RESET(&huart1);
+//		        HAL_UART_Receive_IT(&huart1, u1RxData, LIN_Data_LENGTH);
+//		        return;
+//		    }
+//		    else
+//		    {
+//		        DataReceiveflag = 1;
+//		        DataProcess = 2;
+//
+//		        LIN_RESET(&huart1);
+//		        HAL_UART_Receive_IT(&huart1, u1RxData, LIN_Data_LENGTH);
+//		        return;
+//		    }
+//		}
+//		else if(DataProcess == 2)
+//		{
+//			if(DtRxProcess<8)
+//			{
+//				LinReceiveData[DtRxProcess] = ReceiveData ;
+//				DtRxProcess += 1 ;
+//				if(DtRxProcess == 8)
+//				{
+//					DtRxProcess = 0 ;
+//					DataProcess = 3 ;
+//
+//					LIN_RESET(&huart1);
+//					HAL_UART_Receive_IT(&huart1,u1RxData, LIN_Data_LENGTH );
+//					return ;
+//				}
+//			}
+//		}
+//		else if(DataProcess == 3)
+//		{
+//			ReceiveCheckSum = ReceiveData ;
+//			FrameReceiveOverFlag = 1 ;
+//			DataProcess = 0 ;
+//		}
+
 	}
-
-//	Ser2CAN();
-//	CAN2Ser_Config();
-
-
-	////check heading and ending
-//	if((RxData[0] == 0xFA) & (RxData[1] == 0xFB) & (RxData[2] == 0xF0) & (RxData[21] == 0xEA) & (RxData[22] == 0xEB) & (RxData[23] == 0xE0) )
-//	{
-//		Ser2CAN();
-//	}
-
+	LIN_RESET(&huart1);
+	HAL_UART_Receive_IT(&huart1, u1RxData, LIN_Data_LENGTH);
 }
+
 
 
 void UART_Init(UART_HandleTypeDef *handle, uint32_t data_length) {
@@ -2729,12 +4189,12 @@ uint32_t mRead_ADC1_ch(uint8_t ch)
 
 
 
-//    if (HAL_IS_BIT_SET(HAL_ADC_GetState(&hadc1), HAL_ADC_STATE_REG_EOC))//读取ADC完成标志�?????????????????????????????????????
+//    if (HAL_IS_BIT_SET(HAL_ADC_GetState(&hadc1), HAL_ADC_STATE_REG_EOC))//读取ADC完成标志�?????????????????????????????????????????????????????????
 //    {
 //        adc_value = HAL_ADC_GetValue(&hadc1);//读出ADC数�??
 //
 //        // 将ADC值转换为电压
-//        mVoltage = adc_value  *1165 /165 * 3250/ 4095; // 12位ADC，最�?????????????????????????????????????4095
+//        mVoltage = adc_value  *1165 /165 * 3250/ 4095; // 12位ADC，最�?????????????????????????????????????????????????????????4095
 //    }
 
 
@@ -2746,510 +4206,573 @@ uint32_t mRead_ADC1_ch(uint8_t ch)
 }
 
 
-//void Ser2CAN(void)
-//{
-//	if((RxData[0] == 0xFA) & (RxData[1] == 0xFB) & (RxData[2] == 0xF0) & (RxData[21] == 0xEA) & (RxData[22] == 0xEB) & (RxData[23] == 0xE0) )	// ok Ser2CAN
-//	{
-//		OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "Hello ATP mini~");
-//
-//		char *str = "last TXmsg:";
-//		OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 2, str );
-//
-//		Ser2CAN_Msg[RxData[3]].MsgNum = RxData[3];
-//		Ser2CAN_Msg[RxData[3]].DataChannel = (RxData[4]>>0)& 0x0F;
-//		Ser2CAN_Msg[RxData[3]].DataID = (((RxData[4]&0xF0) << 4) + RxData[5])&0x7FF;
-//		Ser2CAN_Msg[RxData[3]].DataType = (RxData[6]>>0) & 0x03;
-//		Ser2CAN_Msg[RxData[3]].TriggerType = (RxData[6]>>2) & 0x3F;		// max 0x3F
-//		Ser2CAN_Msg[RxData[3]].DataCycle = RxData[7]*10;
-//
-//		if (((RxData[6]>>0) & 0x03) == 1) //CAN
-//		{
-//			Ser2CAN_Msg[RxData[3]].PDUID = 0;
-//
-//			uint8_t dLC = (RxData[8]>>4) & 0x0F;
-//			if(dLC == 0)
-//			{
-//				Ser2CAN_Msg[RxData[3]].DataValueLength = FDCAN_DLC_BYTES_0;
-//			}
-//			else if(dLC == 1)
-//			{
-//				Ser2CAN_Msg[RxData[3]].DataValueLength = FDCAN_DLC_BYTES_1;
-//			}
-//			else if(dLC == 2)
-//			{
-//				Ser2CAN_Msg[RxData[3]].DataValueLength = FDCAN_DLC_BYTES_2;
-//			}
-//			else if(dLC == 3)
-//			{
-//				Ser2CAN_Msg[RxData[3]].DataValueLength = FDCAN_DLC_BYTES_3;
-//			}
-//			else if(dLC == 4)
-//			{
-//				Ser2CAN_Msg[RxData[3]].DataValueLength = FDCAN_DLC_BYTES_4;
-//			}
-//			else if(dLC == 5)
-//			{
-//				Ser2CAN_Msg[RxData[3]].DataValueLength = FDCAN_DLC_BYTES_5;
-//			}
-//			else if(dLC == 6)
-//			{
-//				Ser2CAN_Msg[RxData[3]].DataValueLength = FDCAN_DLC_BYTES_6;
-//			}
-//			else if(dLC == 7)
-//			{
-//				Ser2CAN_Msg[RxData[3]].DataValueLength = FDCAN_DLC_BYTES_7;
-//			}
-//			else if(dLC == 8)
-//			{
-//				Ser2CAN_Msg[RxData[3]].DataValueLength = FDCAN_DLC_BYTES_8;
-//			}
-//			else if(dLC == 9)
-//			{
-//				Ser2CAN_Msg[RxData[3]].DataValueLength = FDCAN_DLC_BYTES_12;
-//			}
-//			else if(dLC == 10)
-//			{
-//				Ser2CAN_Msg[RxData[3]].DataValueLength = FDCAN_DLC_BYTES_16;
-//			}
-//			else if(dLC == 11)
-//			{
-//				Ser2CAN_Msg[RxData[3]].DataValueLength = FDCAN_DLC_BYTES_20;
-//			}
-//			else if(dLC == 12)
-//			{
-//				Ser2CAN_Msg[RxData[3]].DataValueLength = FDCAN_DLC_BYTES_24;
-//			}
-//			else if(dLC == 13)
-//			{
-//				Ser2CAN_Msg[RxData[3]].DataValueLength = FDCAN_DLC_BYTES_32;
-//			}
-//			else if(dLC == 14)
-//			{
-//				Ser2CAN_Msg[RxData[3]].DataValueLength = FDCAN_DLC_BYTES_48;
-//			}
-//			else if(dLC == 15)
-//			{
-//				Ser2CAN_Msg[RxData[3]].DataValueLength = FDCAN_DLC_BYTES_64;
-//			}
-//
-//			Ser2CAN_Msg[RxData[3]].DataValue[0] = RxData[13];
-//			Ser2CAN_Msg[RxData[3]].DataValue[1] = RxData[14];
-//			Ser2CAN_Msg[RxData[3]].DataValue[2] = RxData[15];
-//			Ser2CAN_Msg[RxData[3]].DataValue[3] = RxData[16];
-//			Ser2CAN_Msg[RxData[3]].DataValue[4] = RxData[17];
-//			Ser2CAN_Msg[RxData[3]].DataValue[5] = RxData[18];
-//			Ser2CAN_Msg[RxData[3]].DataValue[6] = RxData[19];
-//			Ser2CAN_Msg[RxData[3]].DataValue[7] = RxData[20];
-//		}
-//		else if (((RxData[6]>>0) & 0x03) == 2) //CAN FD
-//		{
-//			Ser2CAN_Msg[RxData[3]].PDUID = (RxData[8]>>0) & 0x0F;
-//
-//			if (((RxData[8]>>0) & 0x0F) == 0) //frame ID
-//			{
-//
-//				uint8_t dLC = (RxData[8]>>4) & 0x0F;
-//				if(dLC == 0)
-//				{
-//					Ser2CAN_Msg[RxData[3]].DataValueLength = FDCAN_DLC_BYTES_0;
-//				}
-//				else if(dLC == 1)
-//				{
-//					Ser2CAN_Msg[RxData[3]].DataValueLength = FDCAN_DLC_BYTES_1;
-//				}
-//				else if(dLC == 2)
-//				{
-//					Ser2CAN_Msg[RxData[3]].DataValueLength = FDCAN_DLC_BYTES_2;
-//				}
-//				else if(dLC == 3)
-//				{
-//					Ser2CAN_Msg[RxData[3]].DataValueLength = FDCAN_DLC_BYTES_3;
-//				}
-//				else if(dLC == 4)
-//				{
-//					Ser2CAN_Msg[RxData[3]].DataValueLength = FDCAN_DLC_BYTES_4;
-//				}
-//				else if(dLC == 5)
-//				{
-//					Ser2CAN_Msg[RxData[3]].DataValueLength = FDCAN_DLC_BYTES_5;
-//				}
-//				else if(dLC == 6)
-//				{
-//					Ser2CAN_Msg[RxData[3]].DataValueLength = FDCAN_DLC_BYTES_6;
-//				}
-//				else if(dLC == 7)
-//				{
-//					Ser2CAN_Msg[RxData[3]].DataValueLength = FDCAN_DLC_BYTES_7;
-//				}
-//				else if(dLC == 8)
-//				{
-//					Ser2CAN_Msg[RxData[3]].DataValueLength = FDCAN_DLC_BYTES_8;
-//				}
-//				else if(dLC == 9)
-//				{
-//					Ser2CAN_Msg[RxData[3]].DataValueLength = FDCAN_DLC_BYTES_12;
-//				}
-//				else if(dLC == 10)
-//				{
-//					Ser2CAN_Msg[RxData[3]].DataValueLength = FDCAN_DLC_BYTES_16;
-//				}
-//				else if(dLC == 11)
-//				{
-//					Ser2CAN_Msg[RxData[3]].DataValueLength = FDCAN_DLC_BYTES_20;
-//				}
-//				else if(dLC == 12)
-//				{
-//					Ser2CAN_Msg[RxData[3]].DataValueLength = FDCAN_DLC_BYTES_24;
-//				}
-//				else if(dLC == 13)
-//				{
-//					Ser2CAN_Msg[RxData[3]].DataValueLength = FDCAN_DLC_BYTES_32;
-//				}
-//				else if(dLC == 14)
-//				{
-//					Ser2CAN_Msg[RxData[3]].DataValueLength = FDCAN_DLC_BYTES_48;
-//				}
-//				else if(dLC == 15)
-//				{
-//					Ser2CAN_Msg[RxData[3]].DataValueLength = FDCAN_DLC_BYTES_64;
-//				}
-//
-//
-//				for(int i=0;i<64;i++)
-//				{
-//					Ser2CAN_Msg[RxData[3]].FDDataValue[i] =  0x00;	//init
-//				}
-//			}
-//			else if(((RxData[8]>>0) & 0x0F) == 1) //iPDU 1
-//			{
-//				//	header
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[0] =  RxData[9];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[1] =  RxData[10];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[2] =  RxData[11];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[3] =  RxData[12];
-//
-//				//	data
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[4] =  RxData[13];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[5] =  RxData[14];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[6] =  RxData[15];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[7] =  RxData[16];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[8] =  RxData[17];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[9] =  RxData[18];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[10] =  RxData[19];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[11] =  RxData[20];
-//
-//			}
-//			else if(((RxData[8]>>0) & 0x0F) == 2) //iPDU 2
-//			{
-//				//	header
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[12] =  RxData[9];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[13] =  RxData[10];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[14] =  RxData[11];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[15] =  RxData[12];
-//
-//				//	data
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[16] =  RxData[13];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[17] =  RxData[14];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[18] =  RxData[15];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[19] =  RxData[16];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[20] =  RxData[17];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[21] =  RxData[18];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[22] =  RxData[19];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[23] =  RxData[20];
-//			}
-//			else if(((RxData[8]>>0) & 0x0F) == 3) //iPDU 3
-//			{
-//				//	header
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[24] =  RxData[9];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[25] =  RxData[10];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[26] =  RxData[11];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[27] =  RxData[12];
-//
-//				//	data
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[28] =  RxData[13];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[29] =  RxData[14];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[30] =  RxData[15];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[31] =  RxData[16];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[32] =  RxData[17];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[33] =  RxData[18];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[34] =  RxData[19];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[35] =  RxData[20];
-//
-//			}
-//			else if(((RxData[8]>>0) & 0x0F) == 4) //iPDU 4
-//			{
-//				//	header
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[36] =  RxData[9];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[37] =  RxData[10];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[38] =  RxData[11];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[39] =  RxData[12];
-//
-//				//	data
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[40] =  RxData[13];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[41] =  RxData[14];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[42] =  RxData[15];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[43] =  RxData[16];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[44] =  RxData[17];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[45] =  RxData[18];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[46] =  RxData[19];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[47] =  RxData[20];
-//
-//			}
-//			else if(((RxData[8]>>0) & 0x0F) == 5) //iPDU 5
-//			{
-//				//	header
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[48] =  RxData[9];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[49] =  RxData[10];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[50] =  RxData[11];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[51] =  RxData[12];
-//
-//				//	data
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[52] =  RxData[13];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[53] =  RxData[14];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[54] =  RxData[15];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[55] =  RxData[16];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[56] =  RxData[17];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[57] =  RxData[18];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[58] =  RxData[19];
-//				Ser2CAN_Msg[RxData[3]].FDDataValue[59] =  RxData[20];
-//
-//			}
-//		}
-//	}
-//
-//	if((RxData[0] == 0xCA) & (RxData[1] == 0xCB) & (RxData[2] == 0xC0) & (RxData[21] == 0xEA) & (RxData[22] == 0xEB) & (RxData[23] == 0xE0) )	//CAN2Ser Setting
-//	{
-//		char *str = "CAN2Ser Setting";
-//		OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 2, str );
-//
-//		if ((RxData[4]&0x0F)== 1 ) //CAN ch 1
-//		{
-//			if((RxData[4]&0xF0)>>4 == 0 )	//first time config
-//			{
-//				CAN1_2Ser_ID[0] = ((RxData[6]&0x0F)<< 8) + RxData[5];
-//				CAN1_2Ser_ID[1] = ((RxData[6]&0xF0)<< 4) + RxData[7];
-//
-//				CAN1_2Ser_ID[2] = ((RxData[9]&0x0F)<< 8) + RxData[8];
-//				CAN1_2Ser_ID[3] = ((RxData[9]&0xF0)<< 4) + RxData[10];
-//
-//				CAN1_2Ser_ID[4] = ((RxData[12]&0x0F)<< 8) + RxData[11];
-//				CAN1_2Ser_ID[5] = ((RxData[12]&0xF0)<< 4) + RxData[13];
-//
-//				CAN1_2Ser_ID[6] = ((RxData[15]&0x0F)<< 8) + RxData[14];
-//				CAN1_2Ser_ID[7] = ((RxData[15]&0xF0)<< 4) + RxData[16];
-//
-//				CAN1_2Ser_ID[8] = ((RxData[18]&0x0F)<< 8) + RxData[17];
-//				CAN1_2Ser_ID[9] = ((RxData[18]&0xF0)<< 4) + RxData[19];
-//			}
-//			else if((RxData[4]&0xF0)>>4 == 1 )	//2x time config
-//			{
-//				CAN1_2Ser_ID[10] = ((RxData[6]&0x0F)<< 8) + RxData[5];
-//				CAN1_2Ser_ID[11] = ((RxData[6]&0xF0)<< 4) + RxData[7];
-//
-//				CAN1_2Ser_ID[12] = ((RxData[9]&0x0F)<< 8) + RxData[8];
-//				CAN1_2Ser_ID[13] = ((RxData[9]&0xF0)<< 4) + RxData[10];
-//
-//				CAN1_2Ser_ID[14] = ((RxData[12]&0x0F)<< 8) + RxData[11];
-//				CAN1_2Ser_ID[15] = ((RxData[12]&0xF0)<< 4) + RxData[13];
-//
-//				CAN1_2Ser_ID[16] = ((RxData[15]&0x0F)<< 8) + RxData[14];
-//				CAN1_2Ser_ID[17] = ((RxData[15]&0xF0)<< 4) + RxData[16];
-//
-//				CAN1_2Ser_ID[18] = ((RxData[18]&0x0F)<< 8) + RxData[17];
-//				CAN1_2Ser_ID[19] = ((RxData[18]&0xF0)<< 4) + RxData[19];
-//			}
-//			else if((RxData[4]&0xF0)>>4 == 2 )	//3x time config	//max 0-23
-//			{
-//				CAN1_2Ser_ID[20] = ((RxData[6]&0x0F)<< 8) + RxData[5];
-//				CAN1_2Ser_ID[21] = ((RxData[6]&0xF0)<< 4) + RxData[7];
-//
-//				CAN1_2Ser_ID[22] = ((RxData[9]&0x0F)<< 8) + RxData[8];
-//				CAN1_2Ser_ID[23] = ((RxData[9]&0xF0)<< 4) + RxData[10];
-//
-////				CAN1_2Ser_ID[24] = ((RxData[12]&0x0F)<< 8) + RxData[11];
-////				CAN1_2Ser_ID[25] = ((RxData[12]&0xF0)<< 4) + RxData[13];
-////
-////				CAN1_2Ser_ID[26] = ((RxData[15]&0x0F)<< 8) + RxData[14];
-////				CAN1_2Ser_ID[27] = ((RxData[15]&0xF0)<< 4) + RxData[16];
-//
-//			}
-//
-//			for(uint8_t i=0;i<24;i++)
-//			{
-//				FDCAN_Filter1[i].FilterID1 = CAN1_2Ser_ID[i];
-//				FDCAN_Filter1[i].FilterID2 = CAN1_2Ser_ID[i];
-//
-//				if (HAL_FDCAN_ConfigFilter(&hfdcan1, &FDCAN_Filter1[i]) != HAL_OK) //滤波器初始化
-//				{
-//					Error_Handler();
-//				}
-//			}
-//
-//			char str1[4] = {0};
-//			itoa(CAN1_2Ser_ID[0],str1,10);
-//			OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 3, str1 );
-//		}
-//		else if ((RxData[4]&0x03)== 2 )//CH 2
-//		{
-//			if((RxData[4]&0xF0)>>4 == 0 )	//first time config
-//			{
-//				CAN2_2Ser_ID[0] = ((RxData[6]&0x0F)<< 8) + RxData[5];
-//				CAN2_2Ser_ID[1] = ((RxData[6]&0xF0)<< 4) + RxData[7];
-//
-//				CAN2_2Ser_ID[2] = ((RxData[9]&0x0F)<< 8) + RxData[8];
-//				CAN2_2Ser_ID[3] = ((RxData[9]&0xF0)<< 4) + RxData[10];
-//
-//				CAN2_2Ser_ID[4] = ((RxData[12]&0x0F)<< 8) + RxData[11];
-//				CAN2_2Ser_ID[5] = ((RxData[12]&0xF0)<< 4) + RxData[13];
-//
-//				CAN2_2Ser_ID[6] = ((RxData[15]&0x0F)<< 8) + RxData[14];
-//				CAN2_2Ser_ID[7] = ((RxData[15]&0xF0)<< 4) + RxData[16];
-//
-//				CAN2_2Ser_ID[8] = ((RxData[18]&0x0F)<< 8) + RxData[17];
-//				CAN2_2Ser_ID[9] = ((RxData[18]&0xF0)<< 4) + RxData[19];
-//			}
-//			else if((RxData[4]&0xF0)>>4 == 1 )	//2x time config
-//			{
-//				CAN2_2Ser_ID[10] = ((RxData[6]&0x0F)<< 8) + RxData[5];
-//				CAN2_2Ser_ID[11] = ((RxData[6]&0xF0)<< 4) + RxData[7];
-//
-//				CAN2_2Ser_ID[12] = ((RxData[9]&0x0F)<< 8) + RxData[8];
-//				CAN2_2Ser_ID[13] = ((RxData[9]&0xF0)<< 4) + RxData[10];
-//
-//				CAN2_2Ser_ID[14] = ((RxData[12]&0x0F)<< 8) + RxData[11];
-//				CAN2_2Ser_ID[15] = ((RxData[12]&0xF0)<< 4) + RxData[13];
-//
-//				CAN2_2Ser_ID[16] = ((RxData[15]&0x0F)<< 8) + RxData[14];
-//				CAN2_2Ser_ID[17] = ((RxData[15]&0xF0)<< 4) + RxData[16];
-//
-//				CAN2_2Ser_ID[18] = ((RxData[18]&0x0F)<< 8) + RxData[17];
-//				CAN2_2Ser_ID[19] = ((RxData[18]&0xF0)<< 4) + RxData[19];
-//			}
-//			else if((RxData[4]&0xF0)>>4 == 2 )	//3x time config
-//			{
-//				CAN2_2Ser_ID[20] = ((RxData[6]&0x0F)<< 8) + RxData[5];
-//				CAN2_2Ser_ID[21] = ((RxData[6]&0xF0)<< 4) + RxData[7];
-//
-//				CAN2_2Ser_ID[22] = ((RxData[9]&0x0F)<< 8) + RxData[8];
-//				CAN2_2Ser_ID[23] = ((RxData[9]&0xF0)<< 4) + RxData[10];
-//
-//				CAN2_2Ser_ID[24] = ((RxData[12]&0x0F)<< 8) + RxData[11];
-//				CAN2_2Ser_ID[25] = ((RxData[12]&0xF0)<< 4) + RxData[13];
-//
-//				CAN2_2Ser_ID[26] = ((RxData[15]&0x0F)<< 8) + RxData[14];
-//				CAN2_2Ser_ID[27] = ((RxData[15]&0xF0)<< 4) + RxData[16];
-//
-//			}
-//
-//			for(uint8_t i=0;i<24;i++)
-//			{
-//				FDCAN_Filter2[i].FilterID1 = CAN2_2Ser_ID[i];
-//				FDCAN_Filter2[i].FilterID2 = CAN2_2Ser_ID[i];
-//
-//				if (HAL_FDCAN_ConfigFilter(&hfdcan1, &FDCAN_Filter1[i]) != HAL_OK) //滤波器初始化
-//				{
-//					Error_Handler();
-//				}
-//			}
-//
-//		}
-//
-//	}
-//
-//
-//	if((RxData[0] == 0x0A) & (RxData[1] == 0x0B) & (RxData[2] == 0x00) & (RxData[21] == 0xEA) & (RxData[22] == 0xEB) & (RxData[23] == 0xE0) )	//web ask
-//	{
-//		Web_ConnectSts = 150;	//15s
-//
-//		char *str = "Rec Web AskInfo";
-//		OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 2, str );
-//
-//		Bench_Info_TxData[0] = 0x0A;
-//		Bench_Info_TxData[1] = (Bench_Info.ATP_TD_ID)&0x00ff;
-//		Bench_Info_TxData[2] = ((Bench_Info.ATP_TD_ID)&0xff00)>>8;
-//
-//		Bench_Info_TxData[3] = (Bench_Info.Bench_PowerSts&0x03) + 0 ;
-//		Bench_Info_TxData[4] = (Bench_Info.ATP_TD_Model&0x0f) + 0 ;
-//		Bench_Info_TxData[5] = (Bench_Info.Bench_PgLevel1&0x1f) + ((Bench_Info.Bench_PgLevel2&0x07)<<5 );
-//		Bench_Info_TxData[6] = ((Bench_Info.Bench_PgLevel3&0x007)<<5) + (Bench_Info.Bench_PgLevel4&0x1F) ;
-//		Bench_Info_TxData[7] = (Bench_Info.Bench_UTInfo&0x1f) + ((Bench_Info.Bench_TestType&0x07)<<5 );
-//		Bench_Info_TxData[8] = Bench_Info.Bench_TestCase;
-//		Bench_Info_TxData[9] = Bench_Info.Bench_TestProgress;
-//		Bench_Info_TxData[10] = (Bench_Info.Bench_ErrSts&0x03) + ((Bench_Info.Bench_NeedEngineer&0x03)<<2 )+ ((Bench_Info.Bench_TestResult&0x0F)<<4);
-//		Bench_Info_TxData[11] = 0xEA;
-//
-//		HAL_UART_Transmit_IT(Serial_Num, Bench_Info_TxData, 12 );
-//	}
-//
-//
-//
-//
-//
-//	if((RxData[0] == 0xBA) & (RxData[1] == 0xBB) & (RxData[2] == 0xB0) & (RxData[21] == 0xEA) & (RxData[22] == 0xEB) & (RxData[23] == 0xE0) )	//relay
-//	{
-//		char *str = "Rec RelayCtrl";
-//		OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 2, str );
-//
-//		//SerLoCtrl_Msg
-//		SerLoCtrl_Msg.LocalRelay[0] = (RxData[4]>>0)& 0x03;		//2 bits
-//		SerLoCtrl_Msg.LocalRelay[1] = (RxData[4]>>2)& 0x03;
-//		SerLoCtrl_Msg.LocalRelay[2] = (RxData[4]>>4)& 0x03;
-//		SerLoCtrl_Msg.LocalRelay[3] = (RxData[4]>>6)& 0x03;
-//
-//		SerLoCtrl_Msg.LocalRelay[4] = (RxData[5]>>0)& 0x03;
-//		SerLoCtrl_Msg.LocalRelay[5] = (RxData[5]>>2)& 0x03;
-//		SerLoCtrl_Msg.LocalRelay[6] = (RxData[5]>>4)& 0x03;
-//		SerLoCtrl_Msg.LocalRelay[7] = (RxData[5]>>6)& 0x03;
-//
-//
-//		SerLoCtrl_Msg.Local_5VOUT[0] = (RxData[7]>>0)& 0x03;
-//		SerLoCtrl_Msg.Local_5VOUT[1] = (RxData[7]>>2)& 0x03;
-//		SerLoCtrl_Msg.Local_12VOUT[0] = (RxData[7]>>4)& 0x03;
-//		SerLoCtrl_Msg.Local_12VOUT[1] = (RxData[7]>>6)& 0x03;
-//
-//
-////		SerLoCtrl_Msg.LocalPSCtrl[0] = (RxData[11]<< 8) + RxData[12];
-////		SerLoCtrl_Msg.LocalPSCtrl[1] = (RxData[13]<< 8) + RxData[14];
-//
-//	}
-//
-//
-//
-////	char *str2="";
-////	OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 0, RxData[0]);
-////	sprintf(str2, "%d", RxData[0]);
-////	OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, str2);
-////	sprintf(str2, "%c", RxData[0]);
-////	OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 2, str2);
-////	sprintf(str2, "%x", RxData[0]);
-////	OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 3, str2);
-//
-//}
+void MoC_Init() {
+	////42 MotorCtrl init
+	SPI_Stop(Flash_SPI);
+	HAL_Delay(10);
+	SPI_Flash_Start(Flash_SPI);
+	HAL_Delay(10);
+	MotorInit_M1 = 0;
+	MotorInit_M2 = 0;
+	MotorInit_M3 = 0;
+	MotorInit_M4 = 0;
 
+	MotorCtrl_M1.MotorCtrl_HostID = HostID;
+	MotorCtrl_M1.MotorCtrl_FuncType = 0x01;
+	MotorCtrl_M1.MotorCtrl_FuncCode = 0x01;
+	MotorCtrl_M1.MotorCtrl_ByteData = 0x01;		//06/07
+	MotorCtrl_M1.MotorCtrl_DataCode = 0x000000;
 
-void MotoCtrl_PackSend12()
-{
-    MotrCtrl_1_DATA[0] = (MotorCtrl_M1.MotorCtrl_HostID >>3) & 0xff ;
-    MotrCtrl_1_DATA[1] = (MotorCtrl_M1.MotorCtrl_HostID & 0x07) << 5 ;
-    MotrCtrl_1_DATA[2] = ((MotorCtrl_M1.MotorCtrl_FuncType & 0x07)<< 5) + (MotorCtrl_M1.MotorCtrl_FuncCode & 0x1f) ;
-    MotrCtrl_1_DATA[3] = MotorCtrl_M1.MotorCtrl_DataCode & 0xff ;
-    MotrCtrl_1_DATA[4] = (MotorCtrl_M1.MotorCtrl_DataCode >>8) & 0xff ;
-    MotrCtrl_1_DATA[5] = (MotorCtrl_M1.MotorCtrl_DataCode >>16) & 0xff ;
-    MotrCtrl_1_DATA[6] = (MotorCtrl_M1.MotorCtrl_DataCode >>24) & 0xff ;
-    MotrCtrl_1_DATA[7] = MotorCtrl_M1.MotorCtrl_ByteData;
+	MotorCtrl_M2.MotorCtrl_HostID = HostID;
+	MotorCtrl_M2.MotorCtrl_FuncType = 0x01;
+	MotorCtrl_M2.MotorCtrl_FuncCode = 0x01;
+	MotorCtrl_M2.MotorCtrl_ByteData = 0x01;		//06/07
+	MotorCtrl_M2.MotorCtrl_DataCode = 0x000000;
 
-	MotrCtrl_2_DATA[0] = (MotorCtrl_M2.MotorCtrl_HostID >>3) & 0xff ;
-	MotrCtrl_2_DATA[1] = (MotorCtrl_M2.MotorCtrl_HostID & 0x07) << 5 ;
-	MotrCtrl_2_DATA[2] = ((MotorCtrl_M2.MotorCtrl_FuncType & 0x07)<< 5) + (MotorCtrl_M2.MotorCtrl_FuncCode & 0x1f) ;
-	MotrCtrl_2_DATA[3] = MotorCtrl_M2.MotorCtrl_DataCode & 0xff ;
-	MotrCtrl_2_DATA[4] = (MotorCtrl_M2.MotorCtrl_DataCode >>8) & 0xff ;
-	MotrCtrl_2_DATA[5] = (MotorCtrl_M2.MotorCtrl_DataCode >>16) & 0xff ;
-	MotrCtrl_2_DATA[6] = (MotorCtrl_M2.MotorCtrl_DataCode >>24) & 0xff ;
+	MotorInit_M1 = 1;	//init wait
+	MotorInit_M2 = 1;	//init wait
+	MotoCtrl_PackSend12();
+	HAL_Delay(500);
+
+	while ((MotorInit_M1 != 2) | (MotorInit_M2 != 2)) {
+		OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 1, "M1&2 Init Wait ");
+//		HAL_Delay(500);
+		MotoCtrl_PackSend12();
+	}
+
+	char str1[16] = { 0 };
+
+	OLED_ShowString(OLED_I2C_ch, OLED_type, 9, 0, "1 2");	// 9 11 13 15
+	OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 1, "M1&2 Init ok! ");
+
+	OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 2, "X: ");
+	itoa(M1_ID, str1, 16);
+	OLED_ShowString(OLED_I2C_ch, OLED_type, 4, 2, str1);
+	itoa(TA531_RC1.TA531_RC_X_act, str1, 10);
+	OLED_ShowString(OLED_I2C_ch, OLED_type, 8, 2, str1);
+
+	MotorCtrl_M3.MotorCtrl_HostID = HostID;
+	MotorCtrl_M3.MotorCtrl_FuncType = 0x01;
+	MotorCtrl_M3.MotorCtrl_FuncCode = 0x01;
+	MotorCtrl_M3.MotorCtrl_ByteData = 0x01;		//06/07
+	MotorCtrl_M3.MotorCtrl_DataCode = 0x000000;
+
+	MotorInit_M3 = 1;	//init wait
+	MotoCtrl_PackSend3();
+	HAL_Delay(500);
+
+	while (MotorInit_M3 != 2) {
+		OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 1, "M3 Init Wait ");
+		HAL_Delay(500);
+		MotoCtrl_PackSend3();
+	}
+
+	OLED_ShowString(OLED_I2C_ch, OLED_type, 13, 0, "3 ");	// 9 11 13 15
+	OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 1, "M3 Initialized! ");
+
+	OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 3, "Y: ");
+	itoa(M3_ID, str1, 16);
+	OLED_ShowString(OLED_I2C_ch, OLED_type, 4, 3, str1);
+	itoa(TA531_RC1.TA531_RC_Y_act, str1, 10);
+	OLED_ShowString(OLED_I2C_ch, OLED_type, 8, 3, str1);
+
+	OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 1, "Check TouchPen! ");
+	HAL_GPIO_WritePin(KL15_RELAY_GPIO_Port, KL15_RELAY_Pin, 1);	//F
+	HAL_Delay(700);
+	HAL_GPIO_WritePin(KL15_RELAY_GPIO_Port, KL15_RELAY_Pin, 0);	//F
+	HAL_Delay(500);
+
+	OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 1, "PuhUp Rst DispXY");
+	HAL_Delay(500);
+
+	if (SW_UP == 1)	////reset display xy
+			{
+			Sys_tune1();
+		OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 1, "Hold Up 2s Reset");
+		HAL_Delay(800);
+		if (SW_UP == 1)	////reset display xy
+				{
+				Sys_tune1();
+			OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 1, "Hold Up 1s Reset");
+			HAL_Delay(800);
+				Sys_tune1();
+			OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 1, "Release & Reset");
+			HAL_Delay(2000);
+
+			if (SW_UP == 0)	// into reset display xy
+					{
+				OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 1,
+						"U/D/L/R Set X0Y0");
+				HAL_Delay(800);
+				OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 2, "X0:");
+				OLED_ShowString(OLED_I2C_ch, OLED_type, 8, 2, "Y0:");
+
+				while (SW_BUTTON == 0)	//no push down
+				{
+					if ((SW_UP == 1) & (SW_UP_pre == 1)) {
+						TA531_RC1.TA531_RC_X_trg = TA531_RC1.TA531_RC_X_act
+								+ 10;
+
+						TA531_RC1_fg = 2;
+					} else if ((SW_UP == 1) & (SW_UP_pre == 0)) {
+						TA531_RC1.TA531_RC_X_trg = TA531_RC1.TA531_RC_X_act + 2;
+
+						TA531_RC1_fg = 2;
+					} else if ((SW_DW == 1) & (SW_DW_pre == 1)) {
+						TA531_RC1.TA531_RC_X_trg = TA531_RC1.TA531_RC_X_act
+								- 10;
+
+						if (TA531_RC1.TA531_RC_X_trg < 0) {
+							TA531_RC1.TA531_RC_X_trg = 0;
+						}
+						TA531_RC1_fg = 2;
+					} else if ((SW_DW == 1) & (SW_DW_pre == 0)) {
+						TA531_RC1.TA531_RC_X_trg = TA531_RC1.TA531_RC_X_act - 2;
+
+						if (TA531_RC1.TA531_RC_X_trg < 0) {
+							TA531_RC1.TA531_RC_X_trg = 0;
+						}
+						TA531_RC1_fg = 2;
+					} else if ((SW_LEFT == 1) & (SW_LEFT_pre == 0)) {
+						TA531_RC1.TA531_RC_Y_trg = TA531_RC1.TA531_RC_Y_act - 2;
+
+						if (TA531_RC1.TA531_RC_Y_trg < 0) {
+							TA531_RC1.TA531_RC_Y_trg = 0;
+						}
+						TA531_RC1_fg = 2;
+					} else if ((SW_LEFT == 1) & (SW_LEFT_pre == 1)) {
+						TA531_RC1.TA531_RC_Y_trg = TA531_RC1.TA531_RC_Y_act
+								- 10;
+
+						if (TA531_RC1.TA531_RC_Y_trg < 0) {
+							TA531_RC1.TA531_RC_Y_trg = 0;
+						}
+						TA531_RC1_fg = 2;
+					} else if ((SW_RIGHT == 1) & (SW_RIGHT_pre == 0)) {
+						TA531_RC1.TA531_RC_Y_trg = TA531_RC1.TA531_RC_Y_act + 2;
+
+						TA531_RC1_fg = 2;
+					} else if ((SW_RIGHT == 1) & (SW_RIGHT_pre == 1)) {
+						TA531_RC1.TA531_RC_Y_trg = TA531_RC1.TA531_RC_Y_act
+								+ 10;
+
+						TA531_RC1_fg = 2;
+					}
+
+					MotoCtrl_PositionLoop(TA531_RC1.TA531_RC_X_trg,
+							TA531_RC1.TA531_RC_Y_trg);
+					HAL_Delay(300);
+
+					itoa(TA531_RC1.TA531_RC_X_trg, str1, 10);
+					OLED_ShowString(OLED_I2C_ch, OLED_type, 3, 2, str1);
+					itoa(TA531_RC1.TA531_RC_Y_trg, str1, 10);
+					OLED_ShowString(OLED_I2C_ch, OLED_type, 11, 2, str1);
+				}
+
+				////push down
+				ScreenSz_1.DispX0_32b = TA531_RC1.TA531_RC_X_trg;
+				ScreenSz_1.DispX0[0] = TA531_RC1.TA531_RC_X_trg & 0xff;
+				ScreenSz_1.DispX0[1] = (TA531_RC1.TA531_RC_X_trg >> 8) & 0xff;
+				ScreenSz_1.DispX0[2] = (TA531_RC1.TA531_RC_X_trg >> 16) & 0xff;
+				ScreenSz_1.DispX0[3] = (TA531_RC1.TA531_RC_X_trg >> 24) & 0xff;
+
+				ScreenSz_1.DispY0_32b = TA531_RC1.TA531_RC_Y_trg;
+				ScreenSz_1.DispY0[0] = TA531_RC1.TA531_RC_Y_trg & 0xff;
+				ScreenSz_1.DispY0[1] = (TA531_RC1.TA531_RC_Y_trg >> 8) & 0xff;
+				ScreenSz_1.DispY0[2] = (TA531_RC1.TA531_RC_Y_trg >> 16) & 0xff;
+				ScreenSz_1.DispY0[3] = (TA531_RC1.TA531_RC_Y_trg >> 24) & 0xff;
+
+				SPI_Flash_Start(Flash_SPI);
+				SPI_Flash_WtritEnable();
+				HAL_Delay(5);
+				SPI_Flash_WriteSomeBytes(ScreenSz_1.DispX0, Sys_Addr_DispX0,
+						sizeof(int));
+				HAL_Delay(5);
+				SPI_Flash_WtritEnable();
+				HAL_Delay(5);
+				SPI_Flash_WriteSomeBytes(ScreenSz_1.DispY0, Sys_Addr_DispY0,
+						sizeof(int));
+				HAL_Delay(5);
+				uint8_t temp1[4];	//temp3,temp4;
+				SPI_Flash_ReadBytes(temp1, Sys_Addr_DispX0, sizeof(int));
+
+				if ((temp1[0] != ScreenSz_1.DispX0[0]) || (temp1[1] != ScreenSz_1.DispX0[1]) ||
+				    (temp1[2] != ScreenSz_1.DispX0[2]) || (temp1[3] != ScreenSz_1.DispX0[3]))
+				{
+				    OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "WriteFlash Err!");
+				    while((temp1[0] != ScreenSz_1.DispX0[0]) || (temp1[1] != ScreenSz_1.DispX0[1]) ||
+				          (temp1[2] != ScreenSz_1.DispX0[2]) || (temp1[3] != ScreenSz_1.DispX0[3]))
+				    {
+				        SPI_Flash_WtritEnable();
+				        HAL_Delay(5);
+				        SPI_Flash_WriteSomeBytes(ScreenSz_1.DispX0, Sys_Addr_DispX0, sizeof(int));
+				        HAL_Delay(5);
+				        SPI_Flash_ReadBytes(temp1, Sys_Addr_DispX0, sizeof(int));
+				    }
+				    OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "WriteFlash OK!");
+				}
+
+				SPI_Flash_ReadBytes(temp1, Sys_Addr_DispY0, sizeof(int));
+				// ⬅️ | 改为 ||
+				if ((temp1[0] != ScreenSz_1.DispY0[0]) || (temp1[1] != ScreenSz_1.DispY0[1]) ||
+				    (temp1[2] != ScreenSz_1.DispY0[2]) || (temp1[3] != ScreenSz_1.DispY0[3]))
+				{
+				    OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "WriteFlash Err!");
+				    while ((temp1[0] != ScreenSz_1.DispY0[0]) || (temp1[1] != ScreenSz_1.DispY0[1]) ||
+				           (temp1[2] != ScreenSz_1.DispY0[2]) || (temp1[3] != ScreenSz_1.DispY0[3]))
+				    {
+				        SPI_Flash_WtritEnable();
+				        HAL_Delay(5);
+				        SPI_Flash_WriteSomeBytes(ScreenSz_1.DispY0, Sys_Addr_DispY0, sizeof(int));
+				        HAL_Delay(5);
+				        SPI_Flash_ReadBytes(temp1, Sys_Addr_DispY0, sizeof(int));
+				    }
+				    OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "WriteFlash OK!");
+				}
+
+				OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 1,
+						"U/D/L/R Set X1Y1");
+				HAL_Delay(800);
+				OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 3, "X1:");
+				OLED_ShowString(OLED_I2C_ch, OLED_type, 8, 3, "Y1:");
+
+				while (SW_BUTTON == 0)	//no push down
+				{
+					if ((SW_UP == 1) & (SW_UP_pre == 1)) {
+						TA531_RC1.TA531_RC_X_trg = TA531_RC1.TA531_RC_X_act
+								+ 10;
+
+						TA531_RC1_fg = 2;
+					} else if ((SW_UP == 1) & (SW_UP_pre == 0)) {
+						TA531_RC1.TA531_RC_X_trg = TA531_RC1.TA531_RC_X_act + 2;
+
+						TA531_RC1_fg = 2;
+					} else if ((SW_DW == 1) & (SW_DW_pre == 1)) {
+						TA531_RC1.TA531_RC_X_trg = TA531_RC1.TA531_RC_X_act
+								- 10;
+
+						if (TA531_RC1.TA531_RC_X_trg < 0) {
+							TA531_RC1.TA531_RC_X_trg = 0;
+						}
+						TA531_RC1_fg = 2;
+					} else if ((SW_DW == 1) & (SW_DW_pre == 0)) {
+						TA531_RC1.TA531_RC_X_trg = TA531_RC1.TA531_RC_X_act - 2;
+
+						if (TA531_RC1.TA531_RC_X_trg < 0) {
+							TA531_RC1.TA531_RC_X_trg = 0;
+						}
+						TA531_RC1_fg = 2;
+					} else if ((SW_LEFT == 1) & (SW_LEFT_pre == 0)) {
+						TA531_RC1.TA531_RC_Y_trg = TA531_RC1.TA531_RC_Y_act - 2;
+
+						if (TA531_RC1.TA531_RC_Y_trg < 0) {
+							TA531_RC1.TA531_RC_Y_trg = 0;
+						}
+						TA531_RC1_fg = 2;
+					} else if ((SW_LEFT == 1) & (SW_LEFT_pre == 1)) {
+						TA531_RC1.TA531_RC_Y_trg = TA531_RC1.TA531_RC_Y_act
+								- 10;
+
+						if (TA531_RC1.TA531_RC_Y_trg < 0) {
+							TA531_RC1.TA531_RC_Y_trg = 0;
+						}
+						TA531_RC1_fg = 2;
+					} else if ((SW_RIGHT == 1) & (SW_RIGHT_pre == 0)) {
+						TA531_RC1.TA531_RC_Y_trg = TA531_RC1.TA531_RC_Y_act + 2;
+
+						TA531_RC1_fg = 2;
+					} else if ((SW_RIGHT == 1) & (SW_RIGHT_pre == 1)) {
+						TA531_RC1.TA531_RC_Y_trg = TA531_RC1.TA531_RC_Y_act
+								+ 10;
+
+						TA531_RC1_fg = 2;
+					}
+
+					MotoCtrl_PositionLoop(TA531_RC1.TA531_RC_X_trg,
+							TA531_RC1.TA531_RC_Y_trg);
+					HAL_Delay(300);
+
+					itoa(TA531_RC1.TA531_RC_X_trg, str1, 10);
+					OLED_ShowString(OLED_I2C_ch, OLED_type, 3, 3, str1);
+					itoa(TA531_RC1.TA531_RC_Y_trg, str1, 10);
+					OLED_ShowString(OLED_I2C_ch, OLED_type, 11, 3, str1);
+				}
+
+				////push down
+				ScreenSz_1.DispX1_32b = TA531_RC1.TA531_RC_X_trg;
+				ScreenSz_1.DispX1[0] = TA531_RC1.TA531_RC_X_trg & 0xff;
+				ScreenSz_1.DispX1[1] = (TA531_RC1.TA531_RC_X_trg >> 8) & 0xff;
+				ScreenSz_1.DispX1[2] = (TA531_RC1.TA531_RC_X_trg >> 16) & 0xff;
+				ScreenSz_1.DispX1[3] = (TA531_RC1.TA531_RC_X_trg >> 24) & 0xff;
+
+				ScreenSz_1.DispY1_32b = TA531_RC1.TA531_RC_Y_trg;
+				ScreenSz_1.DispY1[0] = TA531_RC1.TA531_RC_Y_trg & 0xff;
+				ScreenSz_1.DispY1[1] = (TA531_RC1.TA531_RC_Y_trg >> 8) & 0xff;
+				ScreenSz_1.DispY1[2] = (TA531_RC1.TA531_RC_Y_trg >> 16) & 0xff;
+				ScreenSz_1.DispY1[3] = (TA531_RC1.TA531_RC_Y_trg >> 24) & 0xff;
+
+				SPI_Flash_Start(Flash_SPI);
+				HAL_Delay(1);
+				SPI_Flash_WtritEnable();
+				HAL_Delay(5);
+				SPI_Flash_WriteSomeBytes(ScreenSz_1.DispX1, Sys_Addr_DispX1,
+						sizeof(int));
+				HAL_Delay(1);
+				SPI_Flash_WtritEnable();
+				HAL_Delay(5);
+				SPI_Flash_WriteSomeBytes(ScreenSz_1.DispY1, Sys_Addr_DispY1,
+						sizeof(int));
+				HAL_Delay(1);
+
+				SPI_Flash_ReadBytes(temp1, Sys_Addr_DispX1, sizeof(int));
+				if ((temp1[0] != ScreenSz_1.DispX1[0]) || (temp1[1] != ScreenSz_1.DispX1[1]) ||
+				    (temp1[2] != ScreenSz_1.DispX1[2]) || (temp1[3] != ScreenSz_1.DispX1[3]))
+				{
+				    OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "WriteFlash Err!");
+				    while((temp1[0] != ScreenSz_1.DispX1[0]) || (temp1[1] != ScreenSz_1.DispX1[1]) ||
+				          (temp1[2] != ScreenSz_1.DispX1[2]) || (temp1[3] != ScreenSz_1.DispX1[3]))
+				    {
+				        SPI_Flash_WtritEnable();
+				        HAL_Delay(5);
+				        SPI_Flash_WriteSomeBytes(ScreenSz_1.DispX1, Sys_Addr_DispX1, sizeof(int));
+				        HAL_Delay(5);
+				        SPI_Flash_ReadBytes(temp1, Sys_Addr_DispX1, sizeof(int));
+				    }
+				    OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "WriteFlash OK!");
+				}
+
+				SPI_Flash_ReadBytes(temp1, Sys_Addr_DispY1, sizeof(int));
+				if ((temp1[0] != ScreenSz_1.DispY1[0]) || (temp1[1] != ScreenSz_1.DispY1[1]) ||
+				    (temp1[2] != ScreenSz_1.DispY1[2]) || (temp1[3] != ScreenSz_1.DispY1[3]))
+				{
+				    OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "WriteFlash Err!");
+				    while((temp1[0] != ScreenSz_1.DispY1[0]) || (temp1[1] != ScreenSz_1.DispY1[1]) ||
+				          (temp1[2] != ScreenSz_1.DispY1[2]) || (temp1[3] != ScreenSz_1.DispY1[3]))
+				    {
+				        SPI_Flash_WtritEnable();
+				        HAL_Delay(5);
+				        SPI_Flash_WriteSomeBytes(ScreenSz_1.DispY1, Sys_Addr_DispY1, sizeof(int));
+				        HAL_Delay(5);
+				        SPI_Flash_ReadBytes(temp1, Sys_Addr_DispY1, sizeof(int));
+				    }
+				    OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "WriteFlash OK!");
+				}
+
+				SPI_Flash_ReadBytes(temp1, Sys_Addr_DispY1, sizeof(int));
+				if ((temp1[0] != ScreenSz_1.DispY1[0])
+						| (temp1[1] != ScreenSz_1.DispY1[1])
+						| (temp1[2] != ScreenSz_1.DispY1[2])
+						| (temp1[3] != ScreenSz_1.DispY1[3])) {
+					OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 1,
+							"WriteFlash Err!");
+					while ((temp1[0] != ScreenSz_1.DispY1[0])
+							| (temp1[1] != ScreenSz_1.DispY1[1])
+							| (temp1[2] != ScreenSz_1.DispY1[2])
+							| (temp1[3] != ScreenSz_1.DispY1[3])) {
+						SPI_Flash_WriteSomeBytes(ScreenSz_1.DispY1,
+								Sys_Addr_DispY1, sizeof(int));
+						HAL_Delay(1);
+						SPI_Flash_ReadBytes(temp1, Sys_Addr_DispY1,
+								sizeof(int));
+					}
+					OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 1,
+							"WriteFlash OK!");
+				}
+
+				////push down
+
+				////Display Area reset finish		//DispX0,DispX1,DispY0,DispY1;
+
+				OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 1,
+						"Reset XY finish!");
+				OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 2,
+						"                ");
+				OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 3,
+						"                ");
+
+			}	//finish reset display xy
+		}	//reset display xy comfirm
+	}	//reset display xy comfirm
+	else {	//DispX0,DispX1,DispY0,DispY1;
+
+//		SPI_Flash_Start(Flash_SPI);
+
+		HAL_Delay(1);
+		SPI_Flash_ReadBytes(ScreenSz_1.DispX0, Sys_Addr_DispX0, sizeof(int));
+		SPI_Flash_ReadBytes(ScreenSz_1.DispY0, Sys_Addr_DispY0, sizeof(int));
+		SPI_Flash_ReadBytes(ScreenSz_1.DispX1, Sys_Addr_DispX1, sizeof(int));
+		SPI_Flash_ReadBytes(ScreenSz_1.DispY1, Sys_Addr_DispY1, sizeof(int));
+
+		ScreenSz_1.DispX0_32b = ScreenSz_1.DispX0[0]
+				+ (ScreenSz_1.DispX0[1] << 8) + (ScreenSz_1.DispX0[2] << 16)
+				+ (ScreenSz_1.DispX0[3] << 24);
+		ScreenSz_1.DispX1_32b = ScreenSz_1.DispX1[0]
+				+ (ScreenSz_1.DispX1[1] << 8) + (ScreenSz_1.DispX1[2] << 16)
+				+ (ScreenSz_1.DispX1[3] << 24);
+		ScreenSz_1.DispY0_32b = ScreenSz_1.DispY0[0]
+				+ (ScreenSz_1.DispY0[1] << 8) + (ScreenSz_1.DispY0[2] << 16)
+				+ (ScreenSz_1.DispY0[3] << 24);
+		ScreenSz_1.DispY1_32b = ScreenSz_1.DispY1[0]
+				+ (ScreenSz_1.DispY1[1] << 8) + (ScreenSz_1.DispY1[2] << 16)
+				+ (ScreenSz_1.DispY1[3] << 24);
+
+	    // ⬅️⬅️⬅️ 添加调试输出 - 显示读取的原始字节
+	    char str1[16];
+	    OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 0, "Raw Bytes:");
+
+	    // 显示X0的4个字节（16进制）
+	    OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "X0:");
+	    itoa(ScreenSz_1.DispX0[0], str1, 16);
+	    OLED_ShowString(OLED_I2C_ch ,OLED_type,3, 1, str1);
+	    itoa(ScreenSz_1.DispX0[1], str1, 16);
+	    OLED_ShowString(OLED_I2C_ch ,OLED_type,5, 1, str1);
+	    itoa(ScreenSz_1.DispX0[2], str1, 16);
+	    OLED_ShowString(OLED_I2C_ch ,OLED_type,7, 1, str1);
+	    itoa(ScreenSz_1.DispX0[3], str1, 16);
+	    OLED_ShowString(OLED_I2C_ch ,OLED_type,9, 1, str1);
+
+	    // 显示X1的4个字节（16进制）
+	    OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 2, "X1:");
+	    itoa(ScreenSz_1.DispX1[0], str1, 16);
+	    OLED_ShowString(OLED_I2C_ch ,OLED_type,3, 2, str1);
+	    itoa(ScreenSz_1.DispX1[1], str1, 16);
+	    OLED_ShowString(OLED_I2C_ch ,OLED_type,5, 2, str1);
+	    itoa(ScreenSz_1.DispX1[2], str1, 16);
+	    OLED_ShowString(OLED_I2C_ch ,OLED_type,7, 2, str1);
+	    itoa(ScreenSz_1.DispX1[3], str1, 16);
+	    OLED_ShowString(OLED_I2C_ch ,OLED_type,9, 2, str1);
+
+	    HAL_Delay(2000);  // 等待2秒让你看清
+
+	    // 显示转换后的32位值（10进制）
+	    OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 0, "32bit Values:");
+
+	    OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "X0:");
+	    itoa(ScreenSz_1.DispX0_32b, str1, 10);
+	    OLED_ShowString(OLED_I2C_ch ,OLED_type,3, 1, str1);
+
+	    OLED_ShowString(OLED_I2C_ch ,OLED_type,8, 1, "X1:");
+	    itoa(ScreenSz_1.DispX1_32b, str1, 10);
+	    OLED_ShowString(OLED_I2C_ch ,OLED_type,11, 1, str1);
+
+	    OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 2, "Y0:");
+	    itoa(ScreenSz_1.DispY0_32b, str1, 10);
+	    OLED_ShowString(OLED_I2C_ch ,OLED_type,3, 2, str1);
+
+	    OLED_ShowString(OLED_I2C_ch ,OLED_type,8, 2, "Y1:");
+	    itoa(ScreenSz_1.DispY1_32b, str1, 10);
+	    OLED_ShowString(OLED_I2C_ch ,OLED_type,11, 2, str1);
+
+	    HAL_Delay(3000);  // 等待3秒让你看清
+
+		HAL_Delay(10);
+		OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 1, "Read XY fm Flash");
+		HAL_Delay(200);
+
+		if ((ScreenSz_1.DispX0_32b > 0)
+				& (ScreenSz_1.DispX0_32b < ScreenSz_1.DispX1_32b)
+				& (ScreenSz_1.DispX1_32b < XmaxLimit)
+				& (ScreenSz_1.DispY0_32b > 0)
+				& (ScreenSz_1.DispY0_32b < ScreenSz_1.DispY1_32b)
+				& (ScreenSz_1.DispY1_32b < YmaxLimit)) {
+			OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 1, "XY Check Pass!");
+		} else {
+			OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 1, "XY Check Fail!");
+				Sys_tune1();
+			OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 2, "Pls Reboot &");
+				Sys_tune1();
+			OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 3, "Reset XY Area");
+				Sys_tune1();
+
+			while (1)
+				;
+		}
+	}	//////finish reset display xy
+
+	TA531_RC1.TA531_RC_X_trg = ScreenSz_1.DispX0_32b;
+	TA531_RC1.TA531_RC_Y_trg = ScreenSz_1.DispY0_32b;
+	//				TA531_RC1.TA531_RC_Z_code = 1;
+	//				TA531_RC1.TA531_RC_Z_code2 = 0;
+	TA531_RC1_fg = 2;
+	MotoCtrl_PositionLoop(TA531_RC1.TA531_RC_X_trg, TA531_RC1.TA531_RC_Y_trg);
+
+	OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 2, "Trg: (");
+	itoa(TA531_RC1.TA531_RC_X_trg, str1, 10);
+	OLED_ShowString(OLED_I2C_ch, OLED_type, 6, 2, str1);
+	OLED_ShowString(OLED_I2C_ch, OLED_type, 10, 2, ", ");
+	itoa(TA531_RC1.TA531_RC_Y_trg, str1, 10);
+	OLED_ShowString(OLED_I2C_ch, OLED_type, 12, 2, str1);
+	OLED_ShowString(OLED_I2C_ch, OLED_type, 15, 2, ")");
+
+	HAL_Delay(1000);
+	HAL_GPIO_WritePin(KL15_RELAY_GPIO_Port, KL15_RELAY_Pin, 1);	//touch pen push
+	HAL_Delay(1000);
+	HAL_GPIO_WritePin(KL15_RELAY_GPIO_Port, KL15_RELAY_Pin, 0);	//touch pen release
+	HAL_Delay(200);
+
+	TA531_RC1.TA531_RC_X_trg = ScreenSz_1.DispX1_32b;
+	TA531_RC1.TA531_RC_Y_trg = ScreenSz_1.DispY1_32b;
+	TA531_RC1_fg = 2;
+	MotoCtrl_PositionLoop(TA531_RC1.TA531_RC_X_trg, TA531_RC1.TA531_RC_Y_trg);
+
+	OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 2, "Trg: (");
+	itoa(TA531_RC1.TA531_RC_X_trg, str1, 10);
+	OLED_ShowString(OLED_I2C_ch, OLED_type, 6, 2, str1);
+	OLED_ShowString(OLED_I2C_ch, OLED_type, 10, 2, ", ");
+	itoa(TA531_RC1.TA531_RC_Y_trg, str1, 10);
+	OLED_ShowString(OLED_I2C_ch, OLED_type, 12, 2, str1);
+	OLED_ShowString(OLED_I2C_ch, OLED_type, 15, 2, ")");
+
+	HAL_Delay(1000);
+	HAL_GPIO_WritePin(KL15_RELAY_GPIO_Port, KL15_RELAY_Pin, 1);	//touch pen push
+	HAL_Delay(1000);
+	HAL_GPIO_WritePin(KL15_RELAY_GPIO_Port, KL15_RELAY_Pin, 0);	//touch pen release
+	HAL_Delay(200);
+
+	TA531_RC1_fg = 2;
+	TA531_RC1.TA531_RC_X_trg = ScreenSz_1.DispX0_32b;  // 改为X0
+	TA531_RC1.TA531_RC_Y_trg = ScreenSz_1.DispY0_32b;  // 改为Y0
+	MotoCtrl_PositionLoop(TA531_RC1.TA531_RC_X_trg, TA531_RC1.TA531_RC_Y_trg);
+
+	itoa(TA531_RC1.TA531_RC_X_trg, str1, 10);
+	OLED_ShowString(OLED_I2C_ch, OLED_type, 6, 2, str1);
+	itoa(TA531_RC1.TA531_RC_Y_trg, str1, 10);
+	OLED_ShowString(OLED_I2C_ch, OLED_type, 12, 2, str1);
+
+	HAL_Delay(1000);
+
+	OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 3, "Act: (");
+	OLED_ShowString(OLED_I2C_ch, OLED_type, 10, 3, ", ");
+	OLED_ShowString(OLED_I2C_ch, OLED_type, 15, 3, ")");
+
+}
+
+void MotoCtrl_PackSend12() {
+	MotrCtrl_1_DATA[0] = (MotorCtrl_M1.MotorCtrl_HostID >> 3) & 0xff;
+	MotrCtrl_1_DATA[1] = (MotorCtrl_M1.MotorCtrl_HostID & 0x07) << 5;
+	MotrCtrl_1_DATA[2] = ((MotorCtrl_M1.MotorCtrl_FuncType & 0x07) << 5)
+			+ (MotorCtrl_M1.MotorCtrl_FuncCode & 0x1f);
+	MotrCtrl_1_DATA[3] = MotorCtrl_M1.MotorCtrl_DataCode & 0xff;
+	MotrCtrl_1_DATA[4] = (MotorCtrl_M1.MotorCtrl_DataCode >> 8) & 0xff;
+	MotrCtrl_1_DATA[5] = (MotorCtrl_M1.MotorCtrl_DataCode >> 16) & 0xff;
+	MotrCtrl_1_DATA[6] = (MotorCtrl_M1.MotorCtrl_DataCode >> 24) & 0xff;
+	MotrCtrl_1_DATA[7] = MotorCtrl_M1.MotorCtrl_ByteData;
+
+	MotrCtrl_2_DATA[0] = (MotorCtrl_M2.MotorCtrl_HostID >> 3) & 0xff;
+	MotrCtrl_2_DATA[1] = (MotorCtrl_M2.MotorCtrl_HostID & 0x07) << 5;
+	MotrCtrl_2_DATA[2] = ((MotorCtrl_M2.MotorCtrl_FuncType & 0x07) << 5)
+			+ (MotorCtrl_M2.MotorCtrl_FuncCode & 0x1f);
+	MotrCtrl_2_DATA[3] = MotorCtrl_M2.MotorCtrl_DataCode & 0xff;
+	MotrCtrl_2_DATA[4] = (MotorCtrl_M2.MotorCtrl_DataCode >> 8) & 0xff;
+	MotrCtrl_2_DATA[5] = (MotorCtrl_M2.MotorCtrl_DataCode >> 16) & 0xff;
+	MotrCtrl_2_DATA[6] = (MotorCtrl_M2.MotorCtrl_DataCode >> 24) & 0xff;
 	MotrCtrl_2_DATA[7] = MotorCtrl_M2.MotorCtrl_ByteData;
 
-	HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan2, &MotrCtrl_2_TxHeader, MotrCtrl_2_DATA);
+	HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan2, &MotrCtrl_2_TxHeader,
+			MotrCtrl_2_DATA);
 	HAL_Delay(10);
-    HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan2, &MotrCtrl_1_TxHeader, MotrCtrl_1_DATA);
+	HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan2, &MotrCtrl_1_TxHeader,
+			MotrCtrl_1_DATA);
 	HAL_Delay(20);
 }
 
@@ -3312,7 +4835,7 @@ void MotoCtrl_PositionLoop(int PositionX_mm, int PositionY_mm)
 	MotorCtrl_M3.MotorCtrl_FuncType = 0x01;
 	MotorCtrl_M3.MotorCtrl_FuncCode = 0x02;
 	MotorCtrl_M3.MotorCtrl_ByteData = 0x01;		//06/07
-	MotorCtrl_M3.MotorCtrl_DataCode = (PositionY_mm +10 ) * 160;
+	MotorCtrl_M3.MotorCtrl_DataCode = -(PositionY_mm + 10) * 160;
 
 	MotoCtrl_PackSend3();
 
@@ -3321,25 +4844,25 @@ void MotoCtrl_PositionLoop(int PositionX_mm, int PositionY_mm)
 	MotorCtrl_M1.MotorCtrl_FuncType = 0x01;
 	MotorCtrl_M1.MotorCtrl_FuncCode = 0x02;
 	MotorCtrl_M1.MotorCtrl_ByteData = 0x01;		//06/07
-	MotorCtrl_M1.MotorCtrl_DataCode = (PositionX_mm +10 ) * 160;
+	MotorCtrl_M1.MotorCtrl_DataCode = -(PositionX_mm + 10) * 160;
 
 	MotorCtrl_M2.MotorCtrl_HostID = HostID;
 	MotorCtrl_M2.MotorCtrl_FuncType = 0x01;
 	MotorCtrl_M2.MotorCtrl_FuncCode = 0x02;
 	MotorCtrl_M2.MotorCtrl_ByteData = 0x01;		//06/07
-	MotorCtrl_M2.MotorCtrl_DataCode = (PositionX_mm +10 ) * 160;
+	MotorCtrl_M2.MotorCtrl_DataCode = -(PositionX_mm + 10) * 160;
 
 	MotoCtrl_PackSend12();
 
 }
 
 
+
+
 uint8_t ByteEncryp(uint8_t byteData)
 {
 	return (EncrypKey ^ byteData);
 }
-
-
 
 
 
@@ -3441,11 +4964,11 @@ uint8_t ByteEncryp(uint8_t byteData)
 //	uint32_t abcd[] = { 0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476 };
 //
 //	uint32_t pos = 0; // position pointer for message
-//	uint32_t bkp_len = 64 * looptimes - mes_len; // 经过计算发现不超�?????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????72
+//	uint32_t bkp_len = 64 * looptimes - mes_len; // 经过计算发现不超�?????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????72
 //
 ////    unsigned char *bkp_mes = (unsigned char *)calloc(1, bkp_len);
 //	unsigned char bkp_mes[80];
-//	for (int i = 0; i < 80; i++) //初始�?????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
+//	for (int i = 0; i < 80; i++) //初始�?????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
 //			{
 //		bkp_mes[i] = 0;
 //	}
@@ -3458,7 +4981,7 @@ uint8_t ByteEncryp(uint8_t byteData)
 //	}
 //
 //	for (i = 0; i < looptimes; i++) {
-//		for (int j = 0; j < 16; j++) //初始�?????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
+//		for (int j = 0; j < 16; j++) //初始�?????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
 //				{
 //			w[j] = 0x00000000;
 //		}
@@ -3480,12 +5003,512 @@ uint8_t ByteEncryp(uint8_t byteData)
 //HAL_I2C_Mem_Read(&hi2c1, PCF8563_ADDRESS, 2, I2C_MEMADD_SIZE_8BIT, buffer, 7, HAL_MAX_DELAY);
 //}
 
+void Set_SystemReboot()
+{
+	OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1,"System Error...");
+	OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 2,"Reboot in 3s...");
+	Sys_tune1();
+	HAL_Delay(800);
+	OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 2,"Reboot in 2s...");
+	Sys_tune1();
+	HAL_Delay(800);
+	OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 2,"Reboot in 1s...");
+	Sys_tune1();
+	HAL_Delay(800);
+	OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 2,"Rebooting . . .");
+	Sys_tune1();
+	//_ASM volatile ("cpsid i");
+	//__set_FAULTMASK(1);//关闭总中�????????????????????????
+	HAL_NVIC_SystemReset();
+}
+
+
+void LIN_RESET(UART_HandleTypeDef *handle) {
+
+	HAL_UART_AbortReceive(handle);
+	HAL_UART_AbortReceive_IT(handle);
+	/* Clear RXNE interrupt flag *//* Discard the received data */
+	__HAL_UART_SEND_REQ(handle, UART_RXDATA_FLUSH_REQUEST);
+
+}
+
+// 停止SPI（禁用SPI外设�???????????
+void SPI_Stop(SPI_HandleTypeDef *hspi) {
+    // 等待传输完成（检查忙标志�???????????
+    while (HAL_SPI_GetState(hspi) == HAL_SPI_STATE_BUSY);
+
+    // 禁用SPI外设（�?�过清除CR1寄存器的SPE位）
+    __HAL_SPI_DISABLE(hspi);
+
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+    GPIO_InitStruct.Pin =  SPI_Flash_NSS_Pin;
+	GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+	HAL_GPIO_Init(SPI_Flash_NSS_GPIO_Port, &GPIO_InitStruct);
+
+    GPIO_InitStruct.Pin =  SPI_TFT_NSS_Pin;
+	GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+	HAL_GPIO_Init(SPI_TFT_NSS_GPIO_Port, &GPIO_InitStruct);
+
+  	HAL_GPIO_WritePin(SPI_Flash_NSS_GPIO_Port, SPI_Flash_NSS_Pin, 1);
+  	HAL_GPIO_WritePin(SPI_TFT_NSS_GPIO_Port, SPI_TFT_NSS_Pin, 1);
+
+}
+
+// 重启SPI（重新使能）
+void SPI_Flash_Start(SPI_HandleTypeDef *hspi) {
+	 GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+    GPIO_InitStruct.Pin =  SPI_Flash_NSS_Pin;
+     GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+     GPIO_InitStruct.Pull = GPIO_NOPULL;
+     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+     HAL_GPIO_Init(SPI_Flash_NSS_GPIO_Port, &GPIO_InitStruct);
+
+     // 重新使能SPI
+     __HAL_SPI_ENABLE(hspi);
+
+     MX_SPI1_Init();
+
+  	HAL_GPIO_WritePin(SPI_Flash_NSS_GPIO_Port, SPI_Flash_NSS_Pin, 0);
+  	HAL_GPIO_WritePin(SPI_TFT_NSS_GPIO_Port, SPI_TFT_NSS_Pin, 1);
+}
+
+void SPI_TFT_Start(SPI_HandleTypeDef *hspi) {
+	 GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+    GPIO_InitStruct.Pin =  SPI_TFT_NSS_Pin;
+     GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+     GPIO_InitStruct.Pull = GPIO_NOPULL;
+     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+     HAL_GPIO_Init(SPI_TFT_NSS_GPIO_Port, &GPIO_InitStruct);
+
+     // 重新使能SPI
+     __HAL_SPI_ENABLE(hspi);
+
+     MX_SPI1_Init();
+
+ 	HAL_GPIO_WritePin(SPI_Flash_NSS_GPIO_Port, SPI_Flash_NSS_Pin, 1);
+ 	HAL_GPIO_WritePin(SPI_TFT_NSS_GPIO_Port, SPI_TFT_NSS_Pin, 0);
+}
+
+void Sys_tune1()
+{
+	  htim1.Instance = TIM1;
+//	  htim1.Init.Prescaler = 63;
+//	  htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
+	  htim1.Init.Period = 1000;
+//	  htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+//	  htim1.Init.RepetitionCounter = 0;
+//	  htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
+	  if (HAL_TIM_PWM_Init(&htim1) != HAL_OK)
+	  {
+	    Error_Handler();
+	  }
+
+
+	  TIM_OC_InitTypeDef sConfigOC = {0};
+
+	  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+	  sConfigOC.Pulse = 200;
+//	  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+//	  sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
+//	  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+//	  sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
+//	  sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
+	  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+	  {
+	    Error_Handler();
+	  }
+	  sConfigOC.Pulse = 0;
+
+	HAL_TIM_PWM_Start(&htim1,TIM_CHANNEL_1);
+	HAL_Delay(200);
+	HAL_TIM_PWM_Stop(&htim1,TIM_CHANNEL_1);
+}
+
+void Sys_tuneX(uint32_t fq)	//fq bigger,sound lower
+{
+
+	  htim1.Instance = TIM1;
+	  htim1.Init.Period = fq;
+	  if (HAL_TIM_PWM_Init(&htim1) != HAL_OK)
+	  {    Error_Handler();  }
+
+	  TIM_OC_InitTypeDef sConfigOC = {0};
+
+	  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+	  sConfigOC.Pulse = fq /4 ;
+
+	  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+	  {    Error_Handler();  }
+	  sConfigOC.Pulse = 0;
+
+	HAL_TIM_PWM_Start(&htim1,TIM_CHANNEL_1);
+	HAL_Delay(200);
+	HAL_TIM_PWM_Stop(&htim1,TIM_CHANNEL_1);
+}
+
+// 1. 角度转脉宽函数（保持不变）
+uint32_t PWMServo_Ag2Pulse(uint32_t ag)
+{
+    uint32_t PWM_Pulse;
+    if (ag > PWM_agMAX)
+    {
+        ag = PWM_agMAX;
+    }
+    PWM_Pulse = PWM_ag0 + ag*(PWM_ag90 - PWM_ag0)/90;
+    return PWM_Pulse;
+}
+
+// 2. TIM2_CH3 舵机控制（修正版）
+void PWMServo2_3_AGout(uint32_t ag)
+{
+    // 直接设置CCR值，不需要重新初始化
+    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, PWMServo_Ag2Pulse(ag));
+}
+
+// 3. TIM2_CH4 舵机控制（修正版）
+void PWMServo2_4_AGout(uint32_t ag)
+{
+    __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, PWMServo_Ag2Pulse(ag));
+}
+
+// 4. TIM3_CH1 舵机控制（修正版）
+void PWMServo3_1_AGout(uint32_t ag)
+{
+    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, PWMServo_Ag2Pulse(ag));
+}
+
+// 5. TIM3_CH2 舵机控制（修正版）
+void PWMServo3_2_AGout(uint32_t ag)
+{
+    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, PWMServo_Ag2Pulse(ag));
+}
+
+/* ========== 电机保护系统实现 ========== */
+
+void Motor_Protection_Init(void) {
+    Motor_Protection.last_X_pos = 0;
+    Motor_Protection.last_Y_pos = 0;
+    Motor_Protection.X_direction_changes = 0;
+    Motor_Protection.Y_direction_changes = 0;
+    Motor_Protection.stuck_counter = 0;
+    Motor_Protection.movement_timeout = 0;
+    Motor_Protection.protection_triggered = 0;
+    Motor_Protection.error_type = 0;
+    Motor_Protection.total_errors = 0;
+}
+
+void Motor_Protection_Reset(void) {
+    Motor_Protection.X_direction_changes = 0;
+    Motor_Protection.Y_direction_changes = 0;
+    Motor_Protection.stuck_counter = 0;
+    Motor_Protection.movement_timeout = 0;
+    Motor_Protection.protection_triggered = 0;
+    Motor_Protection.error_type = 0;
+}
+
+uint8_t Motor_Protection_Check(int16_t current_X, int16_t current_Y,
+                                int16_t target_X, int16_t target_Y) {
+
+    if (MOTOR_PROTECTION_ENABLED == 0) {
+        return 0;
+    }
+
+    if (Motor_Protection.protection_triggered > 0) {
+        return 1;
+    }
+
+    int16_t delta_X = current_X - Motor_Protection.last_X_pos;
+    int16_t delta_Y = current_Y - Motor_Protection.last_Y_pos;
+
+    // ===== 跳过无效采样（位置没更新）=====
+    if (delta_X == 0 && delta_Y == 0) {
+        Motor_Protection.movement_timeout++;
+        if (Motor_Protection.movement_timeout >= MAX_MOVEMENT_TIMEOUT) {
+            Motor_Protection.protection_triggered = 1;
+            Motor_Protection.error_type = 3;
+            Motor_Protection.total_errors++;
+            return 1;
+        }
+        return 0;  // 跳过停滞检测
+    }
+    // =====================================
+
+    int16_t target_delta_X = target_X - current_X;
+    int16_t target_delta_Y = target_Y - current_Y;
+
+    // 检测1: 方向反复变化
+    if (delta_X != 0 && target_delta_X != 0) {
+        if ((delta_X > 0 && target_delta_X < 0) ||
+            (delta_X < 0 && target_delta_X > 0)) {
+            Motor_Protection.X_direction_changes++;
+
+            if (Motor_Protection.X_direction_changes >= MAX_DIRECTION_CHANGES) {
+                Motor_Protection.protection_triggered = 1;
+                Motor_Protection.error_type = 1;
+                Motor_Protection.total_errors++;
+                return 1;
+            }
+        }
+    }
+
+    if (delta_Y != 0 && target_delta_Y != 0) {
+        if ((delta_Y > 0 && target_delta_Y < 0) ||
+            (delta_Y < 0 && target_delta_Y > 0)) {
+            Motor_Protection.Y_direction_changes++;
+
+            if (Motor_Protection.Y_direction_changes >= MAX_DIRECTION_CHANGES) {
+                Motor_Protection.protection_triggered = 1;
+                Motor_Protection.error_type = 1;
+                Motor_Protection.total_errors++;
+                return 1;
+            }
+        }
+    }
+
+    // 检测2: 位置停滞
+    if (abs(delta_X) <= POSITION_TOLERANCE &&
+        abs(delta_Y) <= POSITION_TOLERANCE) {
+        Motor_Protection.stuck_counter++;
+
+        if (Motor_Protection.stuck_counter >= MAX_STUCK_COUNT) {
+            Motor_Protection.protection_triggered = 1;
+            Motor_Protection.error_type = 2;
+            Motor_Protection.total_errors++;
+            return 1;
+        }
+    } else {
+        Motor_Protection.stuck_counter = 0;
+    }
+
+    // 检测3: 运动超时
+    Motor_Protection.movement_timeout++;
+    if (Motor_Protection.movement_timeout >= MAX_MOVEMENT_TIMEOUT) {
+        Motor_Protection.protection_triggered = 1;
+        Motor_Protection.error_type = 3;
+        Motor_Protection.total_errors++;
+        return 1;
+    }
+
+    Motor_Protection.last_X_pos = current_X;
+    Motor_Protection.last_Y_pos = current_Y;
+
+    return 0;
+}
+
+void Motor_Protection_EmergencyStop(void) {
+    Motor_Protection.protection_triggered = 2;
+    TA531_RC1_fg = 0;
+
+    char error_msg[20];
+    switch(Motor_Protection.error_type) {
+        case 1:
+            sprintf(error_msg, "ERR:Motor Shake!");
+            break;
+        case 2:
+            sprintf(error_msg, "ERR:Motor Stuck!");
+            break;
+        case 3:
+            sprintf(error_msg, "ERR:Timeout!    ");
+            break;
+        default:
+            sprintf(error_msg, "ERR:Unknown!    ");
+            break;
+    }
+
+    OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 0, error_msg);
+    OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 3, "Stopping Motor..");
+
+    Sys_tune1();
+    HAL_Delay(300);
+    Sys_tune1();
+
+    OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 3, "Resetting...    ");
+    MotoCtrl_PositionLoop(0, 0);
+    HAL_Delay(2000);
+
+    TA531_RC1.TA531_RC_X_trg = 0;
+    TA531_RC1.TA531_RC_Y_trg = 0;
+    TA531_RC1.TA531_RC_Reset = 0;
+    TA531_RC1.TA531_RC_Z_code = 0;
+    TA531_RC1.TA531_RC_X_Mov = 0;
+    TA531_RC1.TA531_RC_Y_Mov = 0;
+    TA531_Lock = 0;
+
+    OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 3, "System Ready    ");
+    Sys_tune1();
+
+    Motor_Protection_Reset();
+    HAL_Delay(1000);
+}
+
+/* ====================================== */
+
+
 /* USER CODE END 4 */
 
 /**
   * @brief  This function is executed in case of error occurrence.
   * @retval None
   */
+
+void Clamp_Position(int *x, int *y, bool allow_reset)
+{
+    // 如果是复位命令，允许归0
+    if (allow_reset && (*x == 0 && *y == 0))
+    {
+        return;
+    }
+
+    // 确保范围有效（X0 < X1, Y0 < Y1）
+    int x_min = (ScreenSz_1.DispX0_32b < ScreenSz_1.DispX1_32b) ? ScreenSz_1.DispX0_32b : ScreenSz_1.DispX1_32b;
+    int x_max = (ScreenSz_1.DispX0_32b > ScreenSz_1.DispX1_32b) ? ScreenSz_1.DispX0_32b : ScreenSz_1.DispX1_32b;
+    int y_min = (ScreenSz_1.DispY0_32b < ScreenSz_1.DispY1_32b) ? ScreenSz_1.DispY0_32b : ScreenSz_1.DispY1_32b;
+    int y_max = (ScreenSz_1.DispY0_32b > ScreenSz_1.DispY1_32b) ? ScreenSz_1.DispY0_32b : ScreenSz_1.DispY1_32b;
+
+    // 限制X坐标
+    if (*x < x_min) *x = x_min;
+    if (*x > x_max) *x = x_max;
+
+    // 限制Y坐标
+    if (*y < y_min) *y = y_min;
+    if (*y > y_max) *y = y_max;
+}
+
+void Door_Control(void)
+{
+    // 声明静态变量保存上次状态（6个门，包括预留）
+    static uint8_t door_state_old[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+    uint8_t door_changed = 0;
+
+    // ========== 左前门控制（Y_RELAY_1 / PC2）==========
+    if (TA531_Door.Door_FL != door_state_old[0])
+    {
+        door_state_old[0] = TA531_Door.Door_FL;
+        door_changed = 1;
+
+        if (TA531_Door.Door_FL == 0)
+        {
+            HAL_GPIO_WritePin(Y_RELAY_1_GPIO_Port, Y_RELAY_1_Pin, 0);
+        }
+        else if (TA531_Door.Door_FL == 1)
+        {
+            HAL_GPIO_WritePin(Y_RELAY_1_GPIO_Port, Y_RELAY_1_Pin, 1);
+        }
+    }
+
+    // ========== 右前门控制（Y_RELAY_2 / PC3）==========
+    if (TA531_Door.Door_FR != door_state_old[1])
+    {
+        door_state_old[1] = TA531_Door.Door_FR;
+        door_changed = 1;
+
+        if (TA531_Door.Door_FR == 0)
+        {
+            HAL_GPIO_WritePin(Y_RELAY_2_GPIO_Port, Y_RELAY_2_Pin, 0);
+        }
+        else if (TA531_Door.Door_FR == 1)
+        {
+            HAL_GPIO_WritePin(Y_RELAY_2_GPIO_Port, Y_RELAY_2_Pin, 1);
+        }
+    }
+
+    // ========== 左后门控制（Y_RELAY_3 / PA2）==========
+    if (TA531_Door.Door_RL != door_state_old[2])
+    {
+        door_state_old[2] = TA531_Door.Door_RL;
+        door_changed = 1;
+
+        if (TA531_Door.Door_RL == 0)
+        {
+            HAL_GPIO_WritePin(Y_RELAY_3_GPIO_Port, Y_RELAY_3_Pin, 0);
+        }
+        else if (TA531_Door.Door_RL == 1)
+        {
+            HAL_GPIO_WritePin(Y_RELAY_3_GPIO_Port, Y_RELAY_3_Pin, 1);
+        }
+    }
+
+    // ========== 前引擎盖控制（Y_RELAY_4 / PA3）==========
+    if (TA531_Door.Door_Hood != door_state_old[3])
+    {
+        door_state_old[3] = TA531_Door.Door_Hood;
+        door_changed = 1;
+
+        if (TA531_Door.Door_Hood == 0)
+        {
+            HAL_GPIO_WritePin(Y_RELAY_4_GPIO_Port, Y_RELAY_4_Pin, 0);
+        }
+        else if (TA531_Door.Door_Hood == 1)
+        {
+            HAL_GPIO_WritePin(Y_RELAY_4_GPIO_Port, Y_RELAY_4_Pin, 1);
+        }
+    }
+
+    // ========== 后备箱控制（Y_RELAY_5 / PB1）==========
+    if (TA531_Door.Door_Trunk != door_state_old[4])
+    {
+        door_state_old[4] = TA531_Door.Door_Trunk;
+        door_changed = 1;
+
+        if (TA531_Door.Door_Trunk == 0)
+        {
+            HAL_GPIO_WritePin(Y_RELAY_5_GPIO_Port, Y_RELAY_5_Pin, 0);
+        }
+        else if (TA531_Door.Door_Trunk == 1)
+        {
+            HAL_GPIO_WritePin(Y_RELAY_5_GPIO_Port, Y_RELAY_5_Pin, 1);
+        }
+    }
+
+    // ========== Y_RELAY_6 预留占位（PF6）==========
+    if (TA531_Door.Door_Reserve != door_state_old[5])
+    {
+        door_state_old[5] = TA531_Door.Door_Reserve;
+        door_changed = 1;
+
+        if (TA531_Door.Door_Reserve == 0)
+        {
+            HAL_GPIO_WritePin(Y_RELAY_6_GPIO_Port, Y_RELAY_6_Pin, 0);
+        }
+        else if (TA531_Door.Door_Reserve == 1)
+        {
+            HAL_GPIO_WritePin(Y_RELAY_6_GPIO_Port, Y_RELAY_6_Pin, 1);
+        }
+    }
+
+    // ========== 发送门控制ACK报文到CAN1 ==========
+    if (door_changed)
+    {
+        TSA_Door_Relay_DATA[0] = 0x1A;
+        TSA_Door_Relay_DATA[1] = 0x20;
+        TSA_Door_Relay_DATA[2] = 0x42;
+
+        // Byte3: FL, FR, RL, Hood（每个2 bits）
+        TSA_Door_Relay_DATA[3] = (TA531_Door.Door_FL & 0x03) |
+                                  ((TA531_Door.Door_FR & 0x03) << 2) |
+                                  ((TA531_Door.Door_RL & 0x03) << 4) |
+                                  ((TA531_Door.Door_Hood & 0x03) << 6);
+
+        // Byte4: Trunk, Reserve（每个2 bits，还有4 bits空闲）
+        TSA_Door_Relay_DATA[4] = (TA531_Door.Door_Trunk & 0x03) |
+                                  ((TA531_Door.Door_Reserve & 0x03) << 2);
+
+        TSA_Door_Relay_DATA[5] = 0x00;
+        TSA_Door_Relay_DATA[6] = 0x00;
+        TSA_Door_Relay_DATA[7] = 0x00;
+
+        // 发送到CAN1
+        HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &TSA_Door_Relay_Header, TSA_Door_Relay_DATA);
+    }
+}
+
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
