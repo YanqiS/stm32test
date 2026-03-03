@@ -85,6 +85,8 @@ UART_HandleTypeDef *Serial_Num;
 #define ADC_CHANNELS 	6
 #define LightSensr_Gate 	50
 #define LIGHT_SENSOR_INVERT	0	// 0: keep raw mapping; 1: invert when hardware is wired opposite
+#define MOTOR_POS_TOLERANCE	2
+#define MOTOR_MOVE_TIMEOUT_MS	6000
 uint16_t adc_buffer[ADC_CHANNELS]={0};
 
 static uint8_t NormalizeLightSensor(uint16_t raw_adc)
@@ -1019,7 +1021,7 @@ int main(void)
 //			OLED_ShowString(OLED_I2C_ch ,OLED_type,15, 1, str1);
 
 
-			if ((TA531_RC1.TA531_RC_X_act == TA531_RC1.TA531_RC_X_trg))
+			if (abs(TA531_RC1.TA531_RC_X_act - TA531_RC1.TA531_RC_X_trg) <= MOTOR_POS_TOLERANCE)
 			{
 				TA531_RC1_x_ready = 1;
 			}
@@ -1027,7 +1029,7 @@ int main(void)
 			{
 				TA531_RC1_x_ready = 0;
 			}
-			if ((TA531_RC1.TA531_RC_Y_act == TA531_RC1.TA531_RC_Y_trg))
+			if (abs(TA531_RC1.TA531_RC_Y_act - TA531_RC1.TA531_RC_Y_trg) <= MOTOR_POS_TOLERANCE)
 			{
 				TA531_RC1_y_ready = 1;
 			}
@@ -1039,6 +1041,7 @@ int main(void)
 			Motor_Protection_Reset();
 			Motor_Protection.last_X_pos = TA531_RC1.TA531_RC_X_act;
 			Motor_Protection.last_Y_pos = TA531_RC1.TA531_RC_Y_act;
+			uint32_t move_start_tick = HAL_GetTick();
 
 			while ((TA531_RC1_fg == 2)&((TA531_RC1_x_ready& TA531_RC1_y_ready) !=1 ))
 			{
@@ -1063,7 +1066,7 @@ int main(void)
 				        break;
 				    }
 
-				if ((TA531_RC1.TA531_RC_X_act == TA531_RC1.TA531_RC_X_trg))
+				if (abs(TA531_RC1.TA531_RC_X_act - TA531_RC1.TA531_RC_X_trg) <= MOTOR_POS_TOLERANCE)
 				{
 					TA531_RC1_x_ready = 1;
 				}
@@ -1071,13 +1074,21 @@ int main(void)
 				{
 					TA531_RC1_x_ready = 0;
 				}
-				if ((TA531_RC1.TA531_RC_Y_act == TA531_RC1.TA531_RC_Y_trg))
+				if (abs(TA531_RC1.TA531_RC_Y_act - TA531_RC1.TA531_RC_Y_trg) <= MOTOR_POS_TOLERANCE)
 				{
 					TA531_RC1_y_ready = 1;
 				}
 				else
 				{
 					TA531_RC1_y_ready = 0;
+				}
+
+				if ((HAL_GetTick() - move_start_tick) > MOTOR_MOVE_TIMEOUT_MS)
+				{
+					Motor_Protection.protection_triggered = 1;
+					Motor_Protection.error_type = 3;
+					Motor_Protection_EmergencyStop();
+					break;
 				}
 			}
 
