@@ -4278,26 +4278,24 @@ void MoC_Init() {
 					SW_BUTTON = (HAL_GPIO_ReadPin(SW_BUTTON_GPIO_Port, SW_BUTTON_Pin) == 0);
 
 					if ((SW_UP == 1) & (SW_UP_pre == 1)) {
-						TA531_RC1.TA531_RC_X_trg += 10;
+						TA531_RC1.TA531_RC_X_trg -= 10;
+						if (TA531_RC1.TA531_RC_X_trg < 0) {
+							TA531_RC1.TA531_RC_X_trg = 0;
+						}
 
 						TA531_RC1_fg = 2;
 					} else if ((SW_UP == 1) & (SW_UP_pre == 0)) {
-						TA531_RC1.TA531_RC_X_trg += 2;
+						TA531_RC1.TA531_RC_X_trg -= 2;
+						if (TA531_RC1.TA531_RC_X_trg < 0) {
+							TA531_RC1.TA531_RC_X_trg = 0;
+						}
 
 						TA531_RC1_fg = 2;
 					} else if ((SW_DW == 1) & (SW_DW_pre == 1)) {
-						TA531_RC1.TA531_RC_X_trg -= 10;
-
-						if (TA531_RC1.TA531_RC_X_trg < 0) {
-							TA531_RC1.TA531_RC_X_trg = 0;
-						}
+						TA531_RC1.TA531_RC_X_trg += 10;
 						TA531_RC1_fg = 2;
 					} else if ((SW_DW == 1) & (SW_DW_pre == 0)) {
-						TA531_RC1.TA531_RC_X_trg -= 2;
-
-						if (TA531_RC1.TA531_RC_X_trg < 0) {
-							TA531_RC1.TA531_RC_X_trg = 0;
-						}
+						TA531_RC1.TA531_RC_X_trg += 2;
 						TA531_RC1_fg = 2;
 					} else if ((SW_LEFT == 1) & (SW_LEFT_pre == 0)) {
 						TA531_RC1.TA531_RC_Y_trg -= 2;
@@ -4415,26 +4413,24 @@ void MoC_Init() {
 					SW_BUTTON = (HAL_GPIO_ReadPin(SW_BUTTON_GPIO_Port, SW_BUTTON_Pin) == 0);
 
 					if ((SW_UP == 1) & (SW_UP_pre == 1)) {
-						TA531_RC1.TA531_RC_X_trg += 10;
+						TA531_RC1.TA531_RC_X_trg -= 10;
+						if (TA531_RC1.TA531_RC_X_trg < 0) {
+							TA531_RC1.TA531_RC_X_trg = 0;
+						}
 
 						TA531_RC1_fg = 2;
 					} else if ((SW_UP == 1) & (SW_UP_pre == 0)) {
-						TA531_RC1.TA531_RC_X_trg += 2;
+						TA531_RC1.TA531_RC_X_trg -= 2;
+						if (TA531_RC1.TA531_RC_X_trg < 0) {
+							TA531_RC1.TA531_RC_X_trg = 0;
+						}
 
 						TA531_RC1_fg = 2;
 					} else if ((SW_DW == 1) & (SW_DW_pre == 1)) {
-						TA531_RC1.TA531_RC_X_trg -= 10;
-
-						if (TA531_RC1.TA531_RC_X_trg < 0) {
-							TA531_RC1.TA531_RC_X_trg = 0;
-						}
+						TA531_RC1.TA531_RC_X_trg += 10;
 						TA531_RC1_fg = 2;
 					} else if ((SW_DW == 1) & (SW_DW_pre == 0)) {
-						TA531_RC1.TA531_RC_X_trg -= 2;
-
-						if (TA531_RC1.TA531_RC_X_trg < 0) {
-							TA531_RC1.TA531_RC_X_trg = 0;
-						}
+						TA531_RC1.TA531_RC_X_trg += 2;
 						TA531_RC1_fg = 2;
 					} else if ((SW_LEFT == 1) & (SW_LEFT_pre == 0)) {
 						TA531_RC1.TA531_RC_Y_trg -= 2;
@@ -4641,32 +4637,65 @@ void MoC_Init() {
 		OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 1, "Read XY fm Flash");
 		HAL_Delay(200);
 
-		if ((ScreenSz_1.DispX0_32b > 0)
-				& (ScreenSz_1.DispX0_32b < ScreenSz_1.DispX1_32b)
-				& (ScreenSz_1.DispX1_32b < XmaxLimit)
-				& (ScreenSz_1.DispY0_32b > 0)
-				& (ScreenSz_1.DispY0_32b < ScreenSz_1.DispY1_32b)
-				& (ScreenSz_1.DispY1_32b < YmaxLimit)) {
-			OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 1, "XY Check Pass!");
-		} else {
-			OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 1, "XY Check Fail!");
-				Sys_tune1();
-			OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 2, "Pls Reboot &");
-				Sys_tune1();
-			OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 3, "Reset XY Area");
-				Sys_tune1();
+			if ((ScreenSz_1.DispX0_32b >= 0)
+					& (ScreenSz_1.DispX0_32b < ScreenSz_1.DispX1_32b)
+					& (ScreenSz_1.DispX1_32b <= XmaxLimit)
+					& (ScreenSz_1.DispY0_32b >= 0)
+					& (ScreenSz_1.DispY0_32b < ScreenSz_1.DispY1_32b)
+					& (ScreenSz_1.DispY1_32b <= YmaxLimit)) {
+				OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 1, "XY Check Pass!");
+			} else {
+				OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 1, "XY Invalid->Def");
+				ScreenSz_1.DispX0_32b = 0;
+				ScreenSz_1.DispY0_32b = 0;
+				ScreenSz_1.DispX1_32b = XmaxLimit;
+				ScreenSz_1.DispY1_32b = YmaxLimit;
 
-			while (1)
-				;
-		}
+				ScreenSz_1.DispX0[0] = ScreenSz_1.DispX0_32b & 0xff;
+				ScreenSz_1.DispX0[1] = (ScreenSz_1.DispX0_32b >> 8) & 0xff;
+				ScreenSz_1.DispX0[2] = (ScreenSz_1.DispX0_32b >> 16) & 0xff;
+				ScreenSz_1.DispX0[3] = (ScreenSz_1.DispX0_32b >> 24) & 0xff;
+				ScreenSz_1.DispY0[0] = ScreenSz_1.DispY0_32b & 0xff;
+				ScreenSz_1.DispY0[1] = (ScreenSz_1.DispY0_32b >> 8) & 0xff;
+				ScreenSz_1.DispY0[2] = (ScreenSz_1.DispY0_32b >> 16) & 0xff;
+				ScreenSz_1.DispY0[3] = (ScreenSz_1.DispY0_32b >> 24) & 0xff;
+				ScreenSz_1.DispX1[0] = ScreenSz_1.DispX1_32b & 0xff;
+				ScreenSz_1.DispX1[1] = (ScreenSz_1.DispX1_32b >> 8) & 0xff;
+				ScreenSz_1.DispX1[2] = (ScreenSz_1.DispX1_32b >> 16) & 0xff;
+				ScreenSz_1.DispX1[3] = (ScreenSz_1.DispX1_32b >> 24) & 0xff;
+				ScreenSz_1.DispY1[0] = ScreenSz_1.DispY1_32b & 0xff;
+				ScreenSz_1.DispY1[1] = (ScreenSz_1.DispY1_32b >> 8) & 0xff;
+				ScreenSz_1.DispY1[2] = (ScreenSz_1.DispY1_32b >> 16) & 0xff;
+				ScreenSz_1.DispY1[3] = (ScreenSz_1.DispY1_32b >> 24) & 0xff;
+
+				SPI_Flash_WtritEnable();
+				HAL_Delay(5);
+				SPI_Flash_WriteSomeBytes(ScreenSz_1.DispX0, Sys_Addr_DispX0, sizeof(int));
+				SPI_Flash_WtritEnable();
+				HAL_Delay(5);
+				SPI_Flash_WriteSomeBytes(ScreenSz_1.DispY0, Sys_Addr_DispY0, sizeof(int));
+				SPI_Flash_WtritEnable();
+				HAL_Delay(5);
+				SPI_Flash_WriteSomeBytes(ScreenSz_1.DispX1, Sys_Addr_DispX1, sizeof(int));
+				SPI_Flash_WtritEnable();
+				HAL_Delay(5);
+				SPI_Flash_WriteSomeBytes(ScreenSz_1.DispY1, Sys_Addr_DispY1, sizeof(int));
+			}
 	}	//////finish reset display xy
 
 	TA531_RC1.TA531_RC_X_trg = ScreenSz_1.DispX0_32b;
 	TA531_RC1.TA531_RC_Y_trg = ScreenSz_1.DispY0_32b;
 	//				TA531_RC1.TA531_RC_Z_code = 1;
 	//				TA531_RC1.TA531_RC_Z_code2 = 0;
-	TA531_RC1_fg = 2;
-	MotoCtrl_PositionLoop(TA531_RC1.TA531_RC_X_trg, TA531_RC1.TA531_RC_Y_trg);
+		TA531_RC1_fg = 2;
+		MotoCtrl_PositionLoop(TA531_RC1.TA531_RC_X_trg, TA531_RC1.TA531_RC_Y_trg);
+		uint32_t wait_tick = HAL_GetTick();
+		while (((abs(TA531_RC1.TA531_RC_X_act - TA531_RC1.TA531_RC_X_trg) > 2) ||
+				(abs(TA531_RC1.TA531_RC_Y_act - TA531_RC1.TA531_RC_Y_trg) > 2))
+				&& ((HAL_GetTick() - wait_tick) < 5000))
+		{
+			HAL_Delay(20);
+		}
 
 	OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 2, "Trg: (");
 	itoa(TA531_RC1.TA531_RC_X_trg, str1, 10);
@@ -4684,8 +4713,15 @@ void MoC_Init() {
 
 	TA531_RC1.TA531_RC_X_trg = ScreenSz_1.DispX1_32b;
 	TA531_RC1.TA531_RC_Y_trg = ScreenSz_1.DispY1_32b;
-	TA531_RC1_fg = 2;
-	MotoCtrl_PositionLoop(TA531_RC1.TA531_RC_X_trg, TA531_RC1.TA531_RC_Y_trg);
+		TA531_RC1_fg = 2;
+		MotoCtrl_PositionLoop(TA531_RC1.TA531_RC_X_trg, TA531_RC1.TA531_RC_Y_trg);
+		wait_tick = HAL_GetTick();
+		while (((abs(TA531_RC1.TA531_RC_X_act - TA531_RC1.TA531_RC_X_trg) > 2) ||
+				(abs(TA531_RC1.TA531_RC_Y_act - TA531_RC1.TA531_RC_Y_trg) > 2))
+				&& ((HAL_GetTick() - wait_tick) < 5000))
+		{
+			HAL_Delay(20);
+		}
 
 	OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 2, "Trg: (");
 	itoa(TA531_RC1.TA531_RC_X_trg, str1, 10);
@@ -4702,9 +4738,9 @@ void MoC_Init() {
 	HAL_Delay(200);
 
 	TA531_RC1_fg = 2;
-	TA531_RC1.TA531_RC_X_trg = ScreenSz_1.DispX0_32b;  // 改为X0
-	TA531_RC1.TA531_RC_Y_trg = ScreenSz_1.DispY0_32b;  // 改为Y0
-	MotoCtrl_PositionLoop(TA531_RC1.TA531_RC_X_trg, TA531_RC1.TA531_RC_Y_trg);
+		TA531_RC1.TA531_RC_X_trg = ScreenSz_1.DispX1_32b;
+		TA531_RC1.TA531_RC_Y_trg = ScreenSz_1.DispY1_32b;
+		MotoCtrl_PositionLoop(TA531_RC1.TA531_RC_X_trg, TA531_RC1.TA531_RC_Y_trg);
 
 	itoa(TA531_RC1.TA531_RC_X_trg, str1, 10);
 	OLED_ShowString(OLED_I2C_ch, OLED_type, 6, 2, str1);
