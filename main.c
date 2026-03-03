@@ -84,7 +84,35 @@ UART_HandleTypeDef *Serial_Num;
 
 #define ADC_CHANNELS 	6
 #define LightSensr_Gate 	50
+#define LIGHT_SENSOR_INVERT	0	// 0: keep raw mapping; 1: invert when hardware is wired opposite
 uint16_t adc_buffer[ADC_CHANNELS]={0};
+
+static uint8_t NormalizeLightSensor(uint16_t raw_adc)
+{
+	uint8_t level = (uint8_t)((raw_adc * 255U) / 4095U);
+	if (LIGHT_SENSOR_INVERT)
+	{
+		level = (uint8_t)(255U - level);
+	}
+	return level;
+}
+
+static uint8_t EncodeLightAlarm(uint8_t light_level)
+{
+	if (light_level < LightSensr_Gate)
+	{
+		if (light_level < (LightSensr_Gate / 2))
+		{
+			if (light_level < (LightSensr_Gate / 3))
+			{
+				return 3;
+			}
+			return 2;
+		}
+		return 1;
+	}
+	return 0;
+}
 
 int Version_A		= 4	;	//Ver  A.BC
 int Version_B		= 0 ;
@@ -1248,95 +1276,23 @@ int main(void)
 
 
 ///////// Light Sensor
-		TA531SysEnv.TA531_env_LightA1 = adc_buffer[0] *255 /4095;
-		TA531SysEnv.TA531_env_LightA2 = adc_buffer[1] *255 /4095;
-		TA531SysEnv.TA531_env_LightA3 = adc_buffer[2] *255 /4095;
-		TA531SysEnv.TA531_env_LightA4 = adc_buffer[3] *255 /4095;
+		uint8_t *light_a[4] = {
+			&TA531SysEnv.TA531_env_LightA1,
+			&TA531SysEnv.TA531_env_LightA2,
+			&TA531SysEnv.TA531_env_LightA3,
+			&TA531SysEnv.TA531_env_LightA4,
+		};
+		uint8_t *light_d[4] = {
+			&TA531SysEnv.TA531_env_LightD1,
+			&TA531SysEnv.TA531_env_LightD2,
+			&TA531SysEnv.TA531_env_LightD3,
+			&TA531SysEnv.TA531_env_LightD4,
+		};
 
-
-//	    TA531SysEnv.TA531_env_LightA1 = 255 - (adc_buffer[0] *255 /4095);
-//	    TA531SysEnv.TA531_env_LightA2 = 255 - (adc_buffer[1] *255 /4095);
-//	    TA531SysEnv.TA531_env_LightA3 = 255 - (adc_buffer[2] *255 /4095);
-//	    TA531SysEnv.TA531_env_LightA4 = 255 - (adc_buffer[3] *255 /4095);
-
-		if (TA531SysEnv.TA531_env_LightA1 <	LightSensr_Gate)
+		for (uint8_t i = 0; i < 4; i++)
 		{
-			if (TA531SysEnv.TA531_env_LightA1 <	LightSensr_Gate/2)
-			{
-				if (TA531SysEnv.TA531_env_LightA1 <	LightSensr_Gate/3)
-				{
-					TA531SysEnv.TA531_env_LightD1 = 3;
-				}else
-				{
-					TA531SysEnv.TA531_env_LightD1 = 2;
-				}
-			}else
-			{
-				TA531SysEnv.TA531_env_LightD1 = 1;
-			}
-		}else
-		{
-			TA531SysEnv.TA531_env_LightD1 = 0;
-		}
-
-		if (TA531SysEnv.TA531_env_LightA2 <	LightSensr_Gate)
-		{
-			if (TA531SysEnv.TA531_env_LightA2 <	LightSensr_Gate/2)
-			{
-				if (TA531SysEnv.TA531_env_LightA2 <	LightSensr_Gate/3)
-				{
-					TA531SysEnv.TA531_env_LightD2 = 3;
-				}else
-				{
-					TA531SysEnv.TA531_env_LightD2 = 2;
-				}
-			}else
-			{
-				TA531SysEnv.TA531_env_LightD2 = 1;
-			}
-		}else
-		{
-			TA531SysEnv.TA531_env_LightD2 = 0;
-		}
-
-		if (TA531SysEnv.TA531_env_LightA3 <	LightSensr_Gate)
-		{
-			if (TA531SysEnv.TA531_env_LightA3 <	LightSensr_Gate/2)
-			{
-				if (TA531SysEnv.TA531_env_LightA3 <	LightSensr_Gate/3)
-				{
-					TA531SysEnv.TA531_env_LightD3 = 3;
-				}else
-				{
-					TA531SysEnv.TA531_env_LightD3 = 2;
-				}
-			}else
-			{
-				TA531SysEnv.TA531_env_LightD3 = 1;
-			}
-		}else
-		{
-			TA531SysEnv.TA531_env_LightD3 = 0;
-		}
-
-		if (TA531SysEnv.TA531_env_LightA4 <	LightSensr_Gate)
-		{
-			if (TA531SysEnv.TA531_env_LightA4 <	LightSensr_Gate/2)
-			{
-				if (TA531SysEnv.TA531_env_LightA4 <	LightSensr_Gate/3)
-				{
-					TA531SysEnv.TA531_env_LightD4 = 3;
-				}else
-				{
-					TA531SysEnv.TA531_env_LightD4 = 2;
-				}
-			}else
-			{
-				TA531SysEnv.TA531_env_LightD4 = 1;
-			}
-		}else
-		{
-			TA531SysEnv.TA531_env_LightD4 = 0;
+			*light_a[i] = NormalizeLightSensor(adc_buffer[i]);
+			*light_d[i] = EncodeLightAlarm(*light_a[i]);
 		}
 
 //	TSA1_ADC_DATA[8], TSA2_LS_DATA[8]
@@ -4309,52 +4265,60 @@ void MoC_Init() {
 
 				while (SW_BUTTON == 0)	//no push down
 				{
+					SW_UP_pre = SW_UP;
+					SW_DW_pre = SW_DW;
+					SW_LEFT_pre = SW_LEFT;
+					SW_RIGHT_pre = SW_RIGHT;
+					SW_BUTTON_pre = SW_BUTTON;
+
+					SW_UP = (HAL_GPIO_ReadPin(SW_UP_GPIO_Port, SW_UP_Pin) == 0);
+					SW_DW = (HAL_GPIO_ReadPin(SW_DOWN_GPIO_Port, SW_DOWN_Pin) == 0);
+					SW_LEFT = (HAL_GPIO_ReadPin(SW_LEFT_GPIO_Port, SW_LEFT_Pin) == 0);
+					SW_RIGHT = (HAL_GPIO_ReadPin(SW_RIGHT_GPIO_Port, SW_RIGHT_Pin) == 0);
+					SW_BUTTON = (HAL_GPIO_ReadPin(SW_BUTTON_GPIO_Port, SW_BUTTON_Pin) == 0);
+
 					if ((SW_UP == 1) & (SW_UP_pre == 1)) {
-						TA531_RC1.TA531_RC_X_trg = TA531_RC1.TA531_RC_X_act
-								+ 10;
+						TA531_RC1.TA531_RC_X_trg += 10;
 
 						TA531_RC1_fg = 2;
 					} else if ((SW_UP == 1) & (SW_UP_pre == 0)) {
-						TA531_RC1.TA531_RC_X_trg = TA531_RC1.TA531_RC_X_act + 2;
+						TA531_RC1.TA531_RC_X_trg += 2;
 
 						TA531_RC1_fg = 2;
 					} else if ((SW_DW == 1) & (SW_DW_pre == 1)) {
-						TA531_RC1.TA531_RC_X_trg = TA531_RC1.TA531_RC_X_act
-								- 10;
+						TA531_RC1.TA531_RC_X_trg -= 10;
 
 						if (TA531_RC1.TA531_RC_X_trg < 0) {
 							TA531_RC1.TA531_RC_X_trg = 0;
 						}
 						TA531_RC1_fg = 2;
 					} else if ((SW_DW == 1) & (SW_DW_pre == 0)) {
-						TA531_RC1.TA531_RC_X_trg = TA531_RC1.TA531_RC_X_act - 2;
+						TA531_RC1.TA531_RC_X_trg -= 2;
 
 						if (TA531_RC1.TA531_RC_X_trg < 0) {
 							TA531_RC1.TA531_RC_X_trg = 0;
 						}
 						TA531_RC1_fg = 2;
 					} else if ((SW_LEFT == 1) & (SW_LEFT_pre == 0)) {
-						TA531_RC1.TA531_RC_Y_trg = TA531_RC1.TA531_RC_Y_act - 2;
+						TA531_RC1.TA531_RC_Y_trg -= 2;
 
 						if (TA531_RC1.TA531_RC_Y_trg < 0) {
 							TA531_RC1.TA531_RC_Y_trg = 0;
 						}
 						TA531_RC1_fg = 2;
 					} else if ((SW_LEFT == 1) & (SW_LEFT_pre == 1)) {
-						TA531_RC1.TA531_RC_Y_trg = TA531_RC1.TA531_RC_Y_act
-								- 10;
+						TA531_RC1.TA531_RC_Y_trg -= 10;
 
 						if (TA531_RC1.TA531_RC_Y_trg < 0) {
 							TA531_RC1.TA531_RC_Y_trg = 0;
 						}
 						TA531_RC1_fg = 2;
 					} else if ((SW_RIGHT == 1) & (SW_RIGHT_pre == 0)) {
-						TA531_RC1.TA531_RC_Y_trg = TA531_RC1.TA531_RC_Y_act + 2;
+						TA531_RC1.TA531_RC_Y_trg += 2;
 
 						TA531_RC1_fg = 2;
 					} else if ((SW_RIGHT == 1) & (SW_RIGHT_pre == 1)) {
-						TA531_RC1.TA531_RC_Y_trg = TA531_RC1.TA531_RC_Y_act
-								+ 10;
+						TA531_RC1.TA531_RC_Y_trg += 10;
 
 						TA531_RC1_fg = 2;
 					}
@@ -4438,52 +4402,60 @@ void MoC_Init() {
 
 				while (SW_BUTTON == 0)	//no push down
 				{
+					SW_UP_pre = SW_UP;
+					SW_DW_pre = SW_DW;
+					SW_LEFT_pre = SW_LEFT;
+					SW_RIGHT_pre = SW_RIGHT;
+					SW_BUTTON_pre = SW_BUTTON;
+
+					SW_UP = (HAL_GPIO_ReadPin(SW_UP_GPIO_Port, SW_UP_Pin) == 0);
+					SW_DW = (HAL_GPIO_ReadPin(SW_DOWN_GPIO_Port, SW_DOWN_Pin) == 0);
+					SW_LEFT = (HAL_GPIO_ReadPin(SW_LEFT_GPIO_Port, SW_LEFT_Pin) == 0);
+					SW_RIGHT = (HAL_GPIO_ReadPin(SW_RIGHT_GPIO_Port, SW_RIGHT_Pin) == 0);
+					SW_BUTTON = (HAL_GPIO_ReadPin(SW_BUTTON_GPIO_Port, SW_BUTTON_Pin) == 0);
+
 					if ((SW_UP == 1) & (SW_UP_pre == 1)) {
-						TA531_RC1.TA531_RC_X_trg = TA531_RC1.TA531_RC_X_act
-								+ 10;
+						TA531_RC1.TA531_RC_X_trg += 10;
 
 						TA531_RC1_fg = 2;
 					} else if ((SW_UP == 1) & (SW_UP_pre == 0)) {
-						TA531_RC1.TA531_RC_X_trg = TA531_RC1.TA531_RC_X_act + 2;
+						TA531_RC1.TA531_RC_X_trg += 2;
 
 						TA531_RC1_fg = 2;
 					} else if ((SW_DW == 1) & (SW_DW_pre == 1)) {
-						TA531_RC1.TA531_RC_X_trg = TA531_RC1.TA531_RC_X_act
-								- 10;
+						TA531_RC1.TA531_RC_X_trg -= 10;
 
 						if (TA531_RC1.TA531_RC_X_trg < 0) {
 							TA531_RC1.TA531_RC_X_trg = 0;
 						}
 						TA531_RC1_fg = 2;
 					} else if ((SW_DW == 1) & (SW_DW_pre == 0)) {
-						TA531_RC1.TA531_RC_X_trg = TA531_RC1.TA531_RC_X_act - 2;
+						TA531_RC1.TA531_RC_X_trg -= 2;
 
 						if (TA531_RC1.TA531_RC_X_trg < 0) {
 							TA531_RC1.TA531_RC_X_trg = 0;
 						}
 						TA531_RC1_fg = 2;
 					} else if ((SW_LEFT == 1) & (SW_LEFT_pre == 0)) {
-						TA531_RC1.TA531_RC_Y_trg = TA531_RC1.TA531_RC_Y_act - 2;
+						TA531_RC1.TA531_RC_Y_trg -= 2;
 
 						if (TA531_RC1.TA531_RC_Y_trg < 0) {
 							TA531_RC1.TA531_RC_Y_trg = 0;
 						}
 						TA531_RC1_fg = 2;
 					} else if ((SW_LEFT == 1) & (SW_LEFT_pre == 1)) {
-						TA531_RC1.TA531_RC_Y_trg = TA531_RC1.TA531_RC_Y_act
-								- 10;
+						TA531_RC1.TA531_RC_Y_trg -= 10;
 
 						if (TA531_RC1.TA531_RC_Y_trg < 0) {
 							TA531_RC1.TA531_RC_Y_trg = 0;
 						}
 						TA531_RC1_fg = 2;
 					} else if ((SW_RIGHT == 1) & (SW_RIGHT_pre == 0)) {
-						TA531_RC1.TA531_RC_Y_trg = TA531_RC1.TA531_RC_Y_act + 2;
+						TA531_RC1.TA531_RC_Y_trg += 2;
 
 						TA531_RC1_fg = 2;
 					} else if ((SW_RIGHT == 1) & (SW_RIGHT_pre == 1)) {
-						TA531_RC1.TA531_RC_Y_trg = TA531_RC1.TA531_RC_Y_act
-								+ 10;
+						TA531_RC1.TA531_RC_Y_trg += 10;
 
 						TA531_RC1_fg = 2;
 					}
