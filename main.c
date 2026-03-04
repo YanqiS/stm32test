@@ -4369,39 +4369,39 @@ void MoC_Init() {
 				uint8_t temp1[4];	//temp3,temp4;
 				SPI_Flash_ReadBytes(temp1, Sys_Addr_DispX0, sizeof(int));
 
-				if ((temp1[0] != ScreenSz_1.DispX0[0]) || (temp1[1] != ScreenSz_1.DispX0[1]) ||
-				    (temp1[2] != ScreenSz_1.DispX0[2]) || (temp1[3] != ScreenSz_1.DispX0[3]))
-				{
-				    OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "WriteFlash Err!");
-				    while((temp1[0] != ScreenSz_1.DispX0[0]) || (temp1[1] != ScreenSz_1.DispX0[1]) ||
-				          (temp1[2] != ScreenSz_1.DispX0[2]) || (temp1[3] != ScreenSz_1.DispX0[3]))
-				    {
-				        SPI_Flash_WtritEnable();
-				        HAL_Delay(5);
-				        SPI_Flash_WriteSomeBytes(ScreenSz_1.DispX0, Sys_Addr_DispX0, sizeof(int));
-				        HAL_Delay(5);
-				        SPI_Flash_ReadBytes(temp1, Sys_Addr_DispX0, sizeof(int));
-				    }
-				    OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "WriteFlash OK!");
-				}
+					if ((temp1[0] != ScreenSz_1.DispX0[0]) || (temp1[1] != ScreenSz_1.DispX0[1]) ||
+					    (temp1[2] != ScreenSz_1.DispX0[2]) || (temp1[3] != ScreenSz_1.DispX0[3]))
+					{
+					    OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "WriteFlash Retry");
+					    uint8_t retry = 0;
+					    while (((temp1[0] != ScreenSz_1.DispX0[0]) || (temp1[1] != ScreenSz_1.DispX0[1]) ||
+					           (temp1[2] != ScreenSz_1.DispX0[2]) || (temp1[3] != ScreenSz_1.DispX0[3])) && (retry++ < 20))
+					    {
+					        SPI_Flash_WtritEnable();
+					        HAL_Delay(5);
+					        SPI_Flash_WriteSomeBytes(ScreenSz_1.DispX0, Sys_Addr_DispX0, sizeof(int));
+					        HAL_Delay(5);
+					        SPI_Flash_ReadBytes(temp1, Sys_Addr_DispX0, sizeof(int));
+					    }
+					}
 
 				SPI_Flash_ReadBytes(temp1, Sys_Addr_DispY0, sizeof(int));
 				// ⬅️ | 改为 ||
-				if ((temp1[0] != ScreenSz_1.DispY0[0]) || (temp1[1] != ScreenSz_1.DispY0[1]) ||
-				    (temp1[2] != ScreenSz_1.DispY0[2]) || (temp1[3] != ScreenSz_1.DispY0[3]))
-				{
-				    OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "WriteFlash Err!");
-				    while ((temp1[0] != ScreenSz_1.DispY0[0]) || (temp1[1] != ScreenSz_1.DispY0[1]) ||
-				           (temp1[2] != ScreenSz_1.DispY0[2]) || (temp1[3] != ScreenSz_1.DispY0[3]))
-				    {
-				        SPI_Flash_WtritEnable();
-				        HAL_Delay(5);
-				        SPI_Flash_WriteSomeBytes(ScreenSz_1.DispY0, Sys_Addr_DispY0, sizeof(int));
-				        HAL_Delay(5);
-				        SPI_Flash_ReadBytes(temp1, Sys_Addr_DispY0, sizeof(int));
-				    }
-				    OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "WriteFlash OK!");
-				}
+					if ((temp1[0] != ScreenSz_1.DispY0[0]) || (temp1[1] != ScreenSz_1.DispY0[1]) ||
+					    (temp1[2] != ScreenSz_1.DispY0[2]) || (temp1[3] != ScreenSz_1.DispY0[3]))
+					{
+					    OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "WriteFlash Retry");
+					    uint8_t retry = 0;
+					    while (((temp1[0] != ScreenSz_1.DispY0[0]) || (temp1[1] != ScreenSz_1.DispY0[1]) ||
+					           (temp1[2] != ScreenSz_1.DispY0[2]) || (temp1[3] != ScreenSz_1.DispY0[3])) && (retry++ < 20))
+					    {
+					        SPI_Flash_WtritEnable();
+					        HAL_Delay(5);
+					        SPI_Flash_WriteSomeBytes(ScreenSz_1.DispY0, Sys_Addr_DispY0, sizeof(int));
+					        HAL_Delay(5);
+					        SPI_Flash_ReadBytes(temp1, Sys_Addr_DispY0, sizeof(int));
+					    }
+					}
 
 				OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 1,
 						"U/D/L/R Set X1Y1");
@@ -4504,59 +4504,38 @@ void MoC_Init() {
 				HAL_Delay(1);
 
 				SPI_Flash_ReadBytes(temp1, Sys_Addr_DispX1, sizeof(int));
-				if ((temp1[0] != ScreenSz_1.DispX1[0]) || (temp1[1] != ScreenSz_1.DispX1[1]) ||
-				    (temp1[2] != ScreenSz_1.DispX1[2]) || (temp1[3] != ScreenSz_1.DispX1[3]))
-				{
-				    OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "WriteFlash Err!");
-				    while((temp1[0] != ScreenSz_1.DispX1[0]) || (temp1[1] != ScreenSz_1.DispX1[1]) ||
-				          (temp1[2] != ScreenSz_1.DispX1[2]) || (temp1[3] != ScreenSz_1.DispX1[3]))
-				    {
-				        SPI_Flash_WtritEnable();
-				        HAL_Delay(5);
-				        SPI_Flash_WriteSomeBytes(ScreenSz_1.DispX1, Sys_Addr_DispX1, sizeof(int));
-				        HAL_Delay(5);
-				        SPI_Flash_ReadBytes(temp1, Sys_Addr_DispX1, sizeof(int));
-				    }
-				    OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "WriteFlash OK!");
-				}
-
-				SPI_Flash_ReadBytes(temp1, Sys_Addr_DispY1, sizeof(int));
-				if ((temp1[0] != ScreenSz_1.DispY1[0]) || (temp1[1] != ScreenSz_1.DispY1[1]) ||
-				    (temp1[2] != ScreenSz_1.DispY1[2]) || (temp1[3] != ScreenSz_1.DispY1[3]))
-				{
-				    OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "WriteFlash Err!");
-				    while((temp1[0] != ScreenSz_1.DispY1[0]) || (temp1[1] != ScreenSz_1.DispY1[1]) ||
-				          (temp1[2] != ScreenSz_1.DispY1[2]) || (temp1[3] != ScreenSz_1.DispY1[3]))
-				    {
-				        SPI_Flash_WtritEnable();
-				        HAL_Delay(5);
-				        SPI_Flash_WriteSomeBytes(ScreenSz_1.DispY1, Sys_Addr_DispY1, sizeof(int));
-				        HAL_Delay(5);
-				        SPI_Flash_ReadBytes(temp1, Sys_Addr_DispY1, sizeof(int));
-				    }
-				    OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "WriteFlash OK!");
-				}
-
-				SPI_Flash_ReadBytes(temp1, Sys_Addr_DispY1, sizeof(int));
-				if ((temp1[0] != ScreenSz_1.DispY1[0])
-						| (temp1[1] != ScreenSz_1.DispY1[1])
-						| (temp1[2] != ScreenSz_1.DispY1[2])
-						| (temp1[3] != ScreenSz_1.DispY1[3])) {
-					OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 1,
-							"WriteFlash Err!");
-					while ((temp1[0] != ScreenSz_1.DispY1[0])
-							| (temp1[1] != ScreenSz_1.DispY1[1])
-							| (temp1[2] != ScreenSz_1.DispY1[2])
-							| (temp1[3] != ScreenSz_1.DispY1[3])) {
-						SPI_Flash_WriteSomeBytes(ScreenSz_1.DispY1,
-								Sys_Addr_DispY1, sizeof(int));
-						HAL_Delay(1);
-						SPI_Flash_ReadBytes(temp1, Sys_Addr_DispY1,
-								sizeof(int));
+					if ((temp1[0] != ScreenSz_1.DispX1[0]) || (temp1[1] != ScreenSz_1.DispX1[1]) ||
+					    (temp1[2] != ScreenSz_1.DispX1[2]) || (temp1[3] != ScreenSz_1.DispX1[3]))
+					{
+					    OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "WriteFlash Retry");
+					    uint8_t retry = 0;
+					    while (((temp1[0] != ScreenSz_1.DispX1[0]) || (temp1[1] != ScreenSz_1.DispX1[1]) ||
+					           (temp1[2] != ScreenSz_1.DispX1[2]) || (temp1[3] != ScreenSz_1.DispX1[3])) && (retry++ < 20))
+					    {
+					        SPI_Flash_WtritEnable();
+					        HAL_Delay(5);
+					        SPI_Flash_WriteSomeBytes(ScreenSz_1.DispX1, Sys_Addr_DispX1, sizeof(int));
+					        HAL_Delay(5);
+					        SPI_Flash_ReadBytes(temp1, Sys_Addr_DispX1, sizeof(int));
+					    }
 					}
-					OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 1,
-							"WriteFlash OK!");
-				}
+
+				SPI_Flash_ReadBytes(temp1, Sys_Addr_DispY1, sizeof(int));
+					if ((temp1[0] != ScreenSz_1.DispY1[0]) || (temp1[1] != ScreenSz_1.DispY1[1]) ||
+					    (temp1[2] != ScreenSz_1.DispY1[2]) || (temp1[3] != ScreenSz_1.DispY1[3]))
+					{
+					    OLED_ShowString(OLED_I2C_ch ,OLED_type,0, 1, "WriteFlash Retry");
+					    uint8_t retry = 0;
+					    while (((temp1[0] != ScreenSz_1.DispY1[0]) || (temp1[1] != ScreenSz_1.DispY1[1]) ||
+					           (temp1[2] != ScreenSz_1.DispY1[2]) || (temp1[3] != ScreenSz_1.DispY1[3])) && (retry++ < 20))
+					    {
+					        SPI_Flash_WtritEnable();
+					        HAL_Delay(5);
+					        SPI_Flash_WriteSomeBytes(ScreenSz_1.DispY1, Sys_Addr_DispY1, sizeof(int));
+					        HAL_Delay(5);
+					        SPI_Flash_ReadBytes(temp1, Sys_Addr_DispY1, sizeof(int));
+					    }
+					}
 
 				////push down
 
