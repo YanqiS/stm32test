@@ -4169,7 +4169,22 @@ uint32_t mRead_ADC1_ch(uint8_t ch)
     // 停止ADC转换
     HAL_ADC_Stop(&hadc1);
 
-    return mVoltage;
+	return mVoltage;
+}
+
+static bool WaitMotorReached(int target_x, int target_y, uint32_t timeout_ms)
+{
+	uint32_t tick = HAL_GetTick();
+	while ((HAL_GetTick() - tick) < timeout_ms)
+	{
+		if ((abs(TA531_RC1.TA531_RC_X_act - target_x) <= MOTOR_POS_TOLERANCE)
+				&& (abs(TA531_RC1.TA531_RC_Y_act - target_y) <= MOTOR_POS_TOLERANCE))
+		{
+			return true;
+		}
+		HAL_Delay(20);
+	}
+	return false;
 }
 
 
@@ -4230,7 +4245,7 @@ void MoC_Init() {
 
 	while (MotorInit_M3 != 2) {
 		OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 1, "M3 Init Wait ");
-		HAL_Delay(500);
+		HAL_Delay(50);
 		MotoCtrl_PackSend3();
 	}
 
@@ -4343,17 +4358,16 @@ void MoC_Init() {
 				}
 
 				////push down
-				ScreenSz_1.DispX0_32b = TA531_RC1.TA531_RC_X_trg;
-				ScreenSz_1.DispX0[0] = TA531_RC1.TA531_RC_X_trg & 0xff;
-				ScreenSz_1.DispX0[1] = (TA531_RC1.TA531_RC_X_trg >> 8) & 0xff;
-				ScreenSz_1.DispX0[2] = (TA531_RC1.TA531_RC_X_trg >> 16) & 0xff;
-				ScreenSz_1.DispX0[3] = (TA531_RC1.TA531_RC_X_trg >> 24) & 0xff;
-
-				ScreenSz_1.DispY0_32b = TA531_RC1.TA531_RC_Y_trg;
-				ScreenSz_1.DispY0[0] = TA531_RC1.TA531_RC_Y_trg & 0xff;
-				ScreenSz_1.DispY0[1] = (TA531_RC1.TA531_RC_Y_trg >> 8) & 0xff;
-				ScreenSz_1.DispY0[2] = (TA531_RC1.TA531_RC_Y_trg >> 16) & 0xff;
-				ScreenSz_1.DispY0[3] = (TA531_RC1.TA531_RC_Y_trg >> 24) & 0xff;
+					ScreenSz_1.DispX0_32b = TA531_RC1.TA531_RC_X_act;
+					ScreenSz_1.DispX0[0] = TA531_RC1.TA531_RC_X_act & 0xff;
+					ScreenSz_1.DispX0[1] = (TA531_RC1.TA531_RC_X_act >> 8) & 0xff;
+					ScreenSz_1.DispX0[2] = (TA531_RC1.TA531_RC_X_act >> 16) & 0xff;
+					ScreenSz_1.DispX0[3] = (TA531_RC1.TA531_RC_X_act >> 24) & 0xff;
+					ScreenSz_1.DispY0_32b = TA531_RC1.TA531_RC_Y_act;
+					ScreenSz_1.DispY0[0] = TA531_RC1.TA531_RC_Y_act & 0xff;
+					ScreenSz_1.DispY0[1] = (TA531_RC1.TA531_RC_Y_act >> 8) & 0xff;
+					ScreenSz_1.DispY0[2] = (TA531_RC1.TA531_RC_Y_act >> 16) & 0xff;
+					ScreenSz_1.DispY0[3] = (TA531_RC1.TA531_RC_Y_act >> 24) & 0xff;
 
 				SPI_Flash_Start(Flash_SPI);
 				SPI_Flash_WtritEnable();
@@ -4478,17 +4492,16 @@ void MoC_Init() {
 				}
 
 				////push down
-				ScreenSz_1.DispX1_32b = TA531_RC1.TA531_RC_X_trg;
-				ScreenSz_1.DispX1[0] = TA531_RC1.TA531_RC_X_trg & 0xff;
-				ScreenSz_1.DispX1[1] = (TA531_RC1.TA531_RC_X_trg >> 8) & 0xff;
-				ScreenSz_1.DispX1[2] = (TA531_RC1.TA531_RC_X_trg >> 16) & 0xff;
-				ScreenSz_1.DispX1[3] = (TA531_RC1.TA531_RC_X_trg >> 24) & 0xff;
-
-				ScreenSz_1.DispY1_32b = TA531_RC1.TA531_RC_Y_trg;
-				ScreenSz_1.DispY1[0] = TA531_RC1.TA531_RC_Y_trg & 0xff;
-				ScreenSz_1.DispY1[1] = (TA531_RC1.TA531_RC_Y_trg >> 8) & 0xff;
-				ScreenSz_1.DispY1[2] = (TA531_RC1.TA531_RC_Y_trg >> 16) & 0xff;
-				ScreenSz_1.DispY1[3] = (TA531_RC1.TA531_RC_Y_trg >> 24) & 0xff;
+					ScreenSz_1.DispX1_32b = TA531_RC1.TA531_RC_X_act;
+					ScreenSz_1.DispX1[0] = TA531_RC1.TA531_RC_X_act & 0xff;
+					ScreenSz_1.DispX1[1] = (TA531_RC1.TA531_RC_X_act >> 8) & 0xff;
+					ScreenSz_1.DispX1[2] = (TA531_RC1.TA531_RC_X_act >> 16) & 0xff;
+					ScreenSz_1.DispX1[3] = (TA531_RC1.TA531_RC_X_act >> 24) & 0xff;
+					ScreenSz_1.DispY1_32b = TA531_RC1.TA531_RC_Y_act;
+					ScreenSz_1.DispY1[0] = TA531_RC1.TA531_RC_Y_act & 0xff;
+					ScreenSz_1.DispY1[1] = (TA531_RC1.TA531_RC_Y_act >> 8) & 0xff;
+					ScreenSz_1.DispY1[2] = (TA531_RC1.TA531_RC_Y_act >> 16) & 0xff;
+					ScreenSz_1.DispY1[3] = (TA531_RC1.TA531_RC_Y_act >> 24) & 0xff;
 
 				SPI_Flash_Start(Flash_SPI);
 				HAL_Delay(1);
@@ -4679,12 +4692,11 @@ void MoC_Init() {
 	//				TA531_RC1.TA531_RC_Z_code2 = 0;
 		TA531_RC1_fg = 2;
 		MotoCtrl_PositionLoop(TA531_RC1.TA531_RC_X_trg, TA531_RC1.TA531_RC_Y_trg);
-		uint32_t wait_tick = HAL_GetTick();
-		while (((abs(TA531_RC1.TA531_RC_X_act - TA531_RC1.TA531_RC_X_trg) > 2) ||
-				(abs(TA531_RC1.TA531_RC_Y_act - TA531_RC1.TA531_RC_Y_trg) > 2))
-				&& ((HAL_GetTick() - wait_tick) < 5000))
+		if (!WaitMotorReached(TA531_RC1.TA531_RC_X_trg, TA531_RC1.TA531_RC_Y_trg, 8000))
 		{
-			HAL_Delay(20);
+			OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 1, "Verify X0Y0 Fail");
+			TA531_RC1_fg = 0;
+			return;
 		}
 
 	OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 2, "Trg: (");
@@ -4705,12 +4717,11 @@ void MoC_Init() {
 	TA531_RC1.TA531_RC_Y_trg = ScreenSz_1.DispY1_32b;
 		TA531_RC1_fg = 2;
 		MotoCtrl_PositionLoop(TA531_RC1.TA531_RC_X_trg, TA531_RC1.TA531_RC_Y_trg);
-		wait_tick = HAL_GetTick();
-		while (((abs(TA531_RC1.TA531_RC_X_act - TA531_RC1.TA531_RC_X_trg) > 2) ||
-				(abs(TA531_RC1.TA531_RC_Y_act - TA531_RC1.TA531_RC_Y_trg) > 2))
-				&& ((HAL_GetTick() - wait_tick) < 5000))
+		if (!WaitMotorReached(TA531_RC1.TA531_RC_X_trg, TA531_RC1.TA531_RC_Y_trg, 8000))
 		{
-			HAL_Delay(20);
+			OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 1, "Verify X1Y1 Fail");
+			TA531_RC1_fg = 0;
+			return;
 		}
 
 	OLED_ShowString(OLED_I2C_ch, OLED_type, 0, 2, "Trg: (");
